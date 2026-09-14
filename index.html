@@ -144,9 +144,10 @@ h2.sec:first-child{margin-top:2px}
   justify-content:space-between;gap:10px;padding:15px 16px 10px;margin:0;
   border-radius:18px 18px 0 0;box-shadow:0 6px 10px -8px rgba(20,30,42,.25)}
 .sheetHead h3{font-family:var(--mincho);font-size:18px;font-weight:400;margin:0}
-#sheetClose{position:absolute;top:10px;right:14px;z-index:60;width:44px;height:44px;border-radius:50%;
+#sheetClose{position:absolute;z-index:60;width:44px;height:44px;border-radius:50%;
   background:rgba(22,50,79,.92);color:#fff;font-size:22px;line-height:44px;text-align:center;
-  box-shadow:0 2px 10px rgba(20,30,42,.3)}
+  box-shadow:0 2px 10px rgba(20,30,42,.3);left:50%;transform:translateX(-22px);
+  bottom:calc(92vh + 10px)}
 
 nav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(251,250,246,.96);backdrop-filter:blur(8px);
   border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(4,1fr);padding-bottom:env(safe-area-inset-bottom)}
@@ -442,7 +443,16 @@ function parseJSON(t){
   const s=t.replace(/```json|```/g,"").trim();
   const a=s.indexOf("{"),b=s.indexOf("[");
   const i=(a<0)?b:(b<0)?a:Math.min(a,b);
-  return JSON.parse(i>0?s.slice(i):s);
+  const body=i>0?s.slice(i):s;
+  try{ return JSON.parse(body); }catch(e){}
+  // 応答が途中で切れた場合、読める範囲だけ拾う
+  if(body.trim()[0]==="["){
+    const out=[];
+    const re=/\{[^{}]*\}/g; let m;
+    while((m=re.exec(body))){ try{ out.push(JSON.parse(m[0])) }catch(e2){} }
+    if(out.length) return out;
+  }
+  throw new Error("提案をうまく読み取れませんでした。日数を減らして試してください");
 }
 const CHEF="あなたは日本の家庭料理に詳しい献立プランナーです。平日に無理なく作れる現実的な料理を選びます。";
 const FMT=`各料理の形式: {"name":"料理名","time":15,"kcal":300,"ing":[{"n":"鶏もも肉","amt":"200g","cat":"肉"}]}
@@ -797,6 +807,31 @@ function pickPhoto(ev,k,kk){
 }
 
 /* ---------- 料理をするタブ ---------- */
+function shiftCook(n){
+  if(!cookDate)cookDate=key(today);
+  const d=addDays(fromKey(cookDate),n);
+  const min=today, max=addDays(today,6);
+  if(d<new Date(min.getFullYear(),min.getMonth(),min.getDate())) return;
+  if(d>new Date(max.getFullYear(),max.getMonth(),max.getDate())) return;
+  cookDate=key(d); render();
+}
+/* 料理タブは左右にフリックして日付を移動できる */
+(function(){
+  let x0=null,y0=null;
+  const main=$("app");
+  main.addEventListener("touchstart",e=>{
+    if(tab!=="cook"||e.touches.length!==1){x0=null;return}
+    x0=e.touches[0].clientX; y0=e.touches[0].clientY;
+  },{passive:true});
+  main.addEventListener("touchend",e=>{
+    if(x0===null||tab!=="cook")return;
+    const t=e.changedTouches[0];
+    const dx=t.clientX-x0, dy=t.clientY-y0;
+    x0=null;
+    if(Math.abs(dx)<50||Math.abs(dx)<Math.abs(dy)*1.5)return;  // 縦スクロールと区別する
+    shiftCook(dx<0?1:-1);
+  },{passive:true});
+})();
 function renderCook(){
   if(!cookDate)cookDate=key(today);
   const days=[];for(let i=0;i<7;i++)days.push(addDays(today,i));
@@ -806,6 +841,7 @@ function renderCook(){
     <div class="strip">${days.map(d=>{const k=key(d);
       return `<button class="${k===cookDate?"on":""}" onclick="cookDate='${k}';render()">
         <div class="d">${d.getMonth()+1}/${d.getDate()}</div><div class="w">${WD[d.getDay()]}</div></button>`}).join("")}</div>
+    <div class="note" style="text-align:center;margin:-2px 0 8px">← 左右にスワイプで日付を移動 →</div>
     ${day.label?`<div class="card" style="padding:9px 12px;font-size:14px">${esc(day.label)}</div>`:""}
     ${KINDS.map(x=>dishCard(cookDate,x.k,day[x.k])).join("")}
     ${kc?`<div class="note" style="text-align:center">1人ぶん 合計 約${kc}kcal</div>`:""}`;
