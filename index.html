@@ -135,14 +135,16 @@ h2.sec:first-child{margin-top:2px}
 #sheet.on{display:block}
 #sheetBg{position:absolute;inset:0;background:rgba(20,30,42,.45)}
 #sheetBody{position:absolute;left:0;right:0;bottom:0;max-height:92vh;overflow-y:auto;background:var(--paper);
-  border-radius:18px 18px 0 0;padding:0 16px calc(24px + env(safe-area-inset-bottom));animation:up .2s ease-out;
-  -webkit-overflow-scrolling:touch}
+  border-radius:18px 18px 0 0;padding:0 16px calc(24px + env(safe-area-inset-bottom));animation:up .2s ease-out}
 @keyframes up{from{transform:translateY(14px);opacity:.6}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion:reduce){#sheetBody{animation:none}}
 .sheetHead{position:sticky;top:0;z-index:6;background:var(--paper);display:flex;align-items:center;
   justify-content:space-between;gap:10px;padding:15px 0 10px;margin-bottom:2px;
   box-shadow:0 6px 10px -8px rgba(20,30,42,.25)}
 .sheetHead h3{font-family:var(--mincho);font-size:18px;font-weight:400;margin:0}
+#sheetClose{position:absolute;top:10px;right:14px;z-index:60;width:44px;height:44px;border-radius:50%;
+  background:rgba(22,50,79,.92);color:#fff;font-size:22px;line-height:44px;text-align:center;
+  box-shadow:0 2px 10px rgba(20,30,42,.3)}
 
 nav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(251,250,246,.96);backdrop-filter:blur(8px);
   border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(4,1fr);padding-bottom:env(safe-area-inset-bottom)}
@@ -196,7 +198,9 @@ ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-r
   <button data-tab="book" onclick="setTab('book')"><span class="ico">帖</span><span class="nm">レシピ帳</span></button>
 </nav>
 
-<div id="sheet"><div id="sheetBg" onclick="closeSheet()"></div><div id="sheetBody"></div></div>
+<div id="sheet"><div id="sheetBg" onclick="closeSheet()"></div>
+  <button id="sheetClose" onclick="closeSheet()" aria-label="閉じる">×</button>
+  <div id="sheetBody"></div></div>
 <div class="toast" id="toast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -374,16 +378,21 @@ async function rakuten(path,params){
 }
 async function rakutenCats(){
   if(RCATS) return RCATS;
-  const d=await rakuten("CategoryList",{categoryType:"all"});
-  const R=(d.result)||{};
+  // カテゴリは大・中・小をそれぞれ取得する（まとめて取ることはできない）
+  const [L,M,SM]=await Promise.all([
+    rakuten("CategoryList",{categoryType:"large"}),
+    rakuten("CategoryList",{categoryType:"medium"}).catch(()=>null),
+    rakuten("CategoryList",{categoryType:"small"}).catch(()=>null)
+  ]);
   const out=[], midFull={};
-  ((R.large)||[]).forEach(c=>out.push({id:String(c.categoryId),name:c.categoryName,level:1}));
-  ((R.medium)||[]).forEach(c=>{
+  (((L&&L.result&&L.result.large))||[]).forEach(c=>
+    out.push({id:String(c.categoryId),name:c.categoryName,level:1}));
+  (((M&&M.result&&M.result.medium))||[]).forEach(c=>{
     const full=`${c.parentCategoryId}-${c.categoryId}`;
     midFull[String(c.categoryId)]=full;
     out.push({id:full,name:c.categoryName,level:2});
   });
-  ((R.small)||[]).forEach(c=>{
+  (((SM&&SM.result&&SM.result.small))||[]).forEach(c=>{
     const parent=midFull[String(c.parentCategoryId)];
     if(parent) out.push({id:`${parent}-${c.categoryId}`,name:c.categoryName,level:3});
   });
