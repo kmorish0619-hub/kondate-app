@@ -67,7 +67,8 @@ textarea.field{min-height:72px;resize:vertical;line-height:1.55}
 .btn.quiet{background:#EFEDE6;color:var(--sumi)}
 .btn.wide{display:block;width:100%;text-align:center}
 .btn:disabled{opacity:.45}
-.mini{font-size:12px;padding:7px 11px;border-radius:8px;background:#EFEDE6}
+.mini{font-size:12.5px;padding:0 13px;min-height:38px;border-radius:9px;background:#EFEDE6;
+  display:inline-flex;align-items:center;justify-content:center}
 .mini.line{background:#fff;border:1px solid var(--line)}
 .mini.gold{background:var(--yuzu);color:#16324F;font-weight:600}
 h2.sec{font-family:var(--mincho);font-size:16px;font-weight:400;margin:20px 0 9px}
@@ -87,7 +88,9 @@ h2.sec:first-child{margin-top:2px}
 .dish .body{padding:11px 12px}
 .dish .nm{font-size:15px;font-weight:600;line-height:1.35}
 .dish .meta{font-size:11px;color:var(--grey);margin-top:3px}
-.dish .acts{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.dish .acts{display:flex;gap:6px;margin-top:0;flex-wrap:wrap}
+.tapzone{display:block;width:100%;text-align:left;background:none}
+.tapzone:active{background:#F6F4EE}
 .slotAdd{border:1px dashed var(--line);border-radius:12px;padding:14px;text-align:center;color:var(--grey);
   font-size:13px;margin-bottom:10px;background:#FDFCFA}
 
@@ -129,10 +132,13 @@ h2.sec:first-child{margin-top:2px}
 #sheet.on{display:block}
 #sheetBg{position:absolute;inset:0;background:rgba(20,30,42,.45)}
 #sheetBody{position:absolute;left:0;right:0;bottom:0;max-height:92vh;overflow-y:auto;background:var(--paper);
-  border-radius:18px 18px 0 0;padding:16px 16px calc(24px + env(safe-area-inset-bottom));animation:up .2s ease-out}
+  border-radius:18px 18px 0 0;padding:0 16px calc(24px + env(safe-area-inset-bottom));animation:up .2s ease-out;
+  -webkit-overflow-scrolling:touch}
 @keyframes up{from{transform:translateY(14px);opacity:.6}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion:reduce){#sheetBody{animation:none}}
-.sheetHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.sheetHead{position:sticky;top:0;z-index:6;background:var(--paper);display:flex;align-items:center;
+  justify-content:space-between;gap:10px;padding:15px 0 10px;margin-bottom:2px;
+  box-shadow:0 6px 10px -8px rgba(20,30,42,.25)}
 .sheetHead h3{font-family:var(--mincho);font-size:18px;font-weight:400;margin:0}
 
 nav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(251,250,246,.96);backdrop-filter:blur(8px);
@@ -438,19 +444,22 @@ function dishCard(k,kk,raw){
   if(!d||!d.name) return `<button class="slotAdd" style="width:100%" onclick="addDish('${k}','${kk}')">＋ ${kindNm(kk)}を追加</button>`;
   const meta=[d.time?`${d.time}分`:"",d.kcal?`${d.kcal}kcal`:"",d.done?"作った":""].filter(Boolean).join("・");
   return `<div class="dish">
-    <div class="pic">${d.photo?`<img src="${d.photo}" alt="${esc(d.name)}">`:"写真はまだ"}
-      <span class="kind ${kk}">${kindNm(kk)}</span>
-      ${d.recipeId?`<span class="bookmark">帳面</span>`:""}</div>
-    <div class="body">
-      <div class="nm">${esc(d.name)}</div>
-      <div class="meta">${esc(meta||"　")}</div>
+    <button class="tapzone" onclick="openRecipe('${k}','${kk}')">
+      <div class="pic">${d.photo?`<img src="${d.photo}" alt="${esc(d.name)}">`:"写真はまだ"}
+        <span class="kind ${kk}">${kindNm(kk)}</span>
+        ${d.recipeId?`<span class="bookmark">帳面</span>`:""}</div>
+      <div class="body" style="padding-bottom:4px">
+        <div class="nm">${esc(d.name)}</div>
+        <div class="meta">${esc(meta||"　")}　<span style="color:var(--ink)">レシピを見る ›</span></div>
+      </div>
+    </button>
+    <div class="body" style="padding-top:6px">
       <div class="acts">
-        <button class="mini" onclick="openRecipe('${k}','${kk}')">レシピ</button>
         ${d.recipeId?"":`<button class="mini gold" onclick="registerRecipe('${k}','${kk}')">帳面に入れる</button>`}
         ${WORKER_URL?`<button class="mini line" onclick="swapDish('${k}','${kk}')">変更する</button>`:""}
-        <label class="mini line" style="display:inline-block">${d.photo?"写真を撮り直す":"作った・写真"}
+        <label class="mini line">${d.photo?"写真を撮り直す":"作った・写真"}
           <input type="file" accept="image/*" style="display:none" onchange="pickPhoto(event,'${k}','${kk}')"></label>
-        <button class="mini line" style="color:var(--danger)" onclick="rmDish('${k}','${kk}')">×</button>
+        <button class="mini line" style="color:var(--danger)" onclick="rmDish('${k}','${kk}')">献立から外す</button>
       </div>
     </div></div>`;
 }
@@ -576,6 +585,7 @@ function editDish(k,kk,isNew){
     <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(d.tips||"")}">
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" inputmode="url" value="${esc(d.url||"")}" placeholder="https://...">
     <button class="btn wide" style="margin-top:14px" onclick="saveDish('${k}','${kk}')">保存してレシピ帳に反映</button>`;
+  $("sheetBody").scrollTop=0;
 }
 function saveDish(k,kk){
   const name=$("eN").value.trim(); if(!name){toast("料理名を入れてください");return}
@@ -780,21 +790,58 @@ function openBook(id){
 }
 function editBook(id){
   const r=S.recipes[id];
+  const ph=r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>レシピを編集</h3>
       <button class="btn quiet" onclick="openBook('${id}')">戻る</button></div>
+    <div class="lbl">写真（${ph.length}／${PHOTO_KEEP}枚）</div>
+    ${ph.length?`<div class="photoStrip">${ph.map(([pid,p])=>`<figure style="position:relative">
+        <img src="${p.img}" alt="">
+        <button onclick="delBookPhoto('${id}','${pid}')" style="position:absolute;top:3px;right:3px;
+          width:24px;height:24px;border-radius:50%;background:rgba(22,50,79,.85);color:#fff;font-size:14px;
+          line-height:24px;text-align:center">×</button>
+        <figcaption>${esc(p.date.slice(5).replace("-","/"))}</figcaption></figure>`).join("")}</div>`
+      :`<div class="note" style="margin-bottom:6px">まだ写真がありません</div>`}
+    <label class="btn wide quiet" style="margin-bottom:12px">写真を追加する
+      <input type="file" accept="image/*" style="display:none" onchange="addBookPhoto(event,'${id}')"></label>
     <div class="lbl">料理名</div><input class="field" id="eN" value="${esc(r.name)}">
     <div class="row2" style="margin-top:10px">
       <div><div class="lbl">調理時間（分）</div><input class="field" id="eT" type="number" value="${r.time||""}"></div>
       <div><div class="lbl">kcal（1人）</div><input class="field" id="eK" type="number" value="${r.kcal||""}"></div>
     </div>
     <div class="lbl" style="margin-top:12px">材料（1行に「名前, 分量, 分類」）</div>
-    <textarea class="field" id="eI">${esc((r.ing||[]).map(x=>`${x.n}, ${x.amt}, ${x.cat}`).join("\n"))}</textarea>
+    <textarea class="field" id="eI" style="min-height:120px">${esc((r.ing||[]).map(x=>`${x.n}, ${x.amt}, ${x.cat}`).join("\n"))}</textarea>
     <div class="lbl" style="margin-top:12px">つくり方（1行に1ステップ）</div>
-    <textarea class="field" id="eS">${esc((r.steps||[]).join("\n"))}</textarea>
+    <textarea class="field" id="eS" style="min-height:140px">${esc((r.steps||[]).join("\n"))}</textarea>
     <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(r.tips||"")}">
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" value="${esc(r.url||"")}">
     <button class="btn wide" style="margin-top:14px" onclick="saveBook('${id}')">保存</button>`;
+  $("sheetBody").scrollTop=0;
+}
+function addBookPhoto(ev,id){
+  const f=ev.target.files&&ev.target.files[0]; if(!f)return;
+  toast("写真を縮めています…");
+  const img=new Image(), rd=new FileReader();
+  rd.onload=()=>{img.onload=()=>{
+    let w=img.width,h=img.height; const sc=Math.min(1,PHOTO_MAX/Math.max(w,h));
+    w=Math.round(w*sc); h=Math.round(h*sc);
+    const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+    cv.getContext("2d").drawImage(img,0,0,w,h);
+    const r=JSON.parse(JSON.stringify(S.recipes[id]));
+    r.photos=r.photos||{};
+    r.photos[uid()]={img:cv.toDataURL("image/jpeg",PHOTO_Q),date:key(today)};
+    const ids=Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1));
+    if(ids.length>PHOTO_KEEP) ids.slice(PHOTO_KEEP).forEach(([i])=>delete r.photos[i]);
+    saveQuiet(["recipes",id],r); render(); editBook(id); toast("写真を追加しました");
+  };img.src=rd.result};
+  rd.readAsDataURL(f);
+}
+function delBookPhoto(id,pid){
+  if(!confirm("この写真を削除しますか？"))return;
+  const r=JSON.parse(JSON.stringify(S.recipes[id]));
+  if(r.photos) delete r.photos[pid];
+  if(r.photos&&!Object.keys(r.photos).length) delete r.photos;
+  saveQuiet(["recipes",id],r); render(); editBook(id); toast("削除しました");
 }
 function saveBook(id){
   const name=$("eN").value.trim(); if(!name){toast("料理名を入れてください");return}
