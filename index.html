@@ -277,10 +277,11 @@ function dishData(d){
   if(d.recipeId){
     const r=S.recipes[d.recipeId];
     if(!r) return {name:"（削除されたレシピ）",missing:true,recipeId:d.recipeId};
-    const ph=(d.photoId&&r.photos&&r.photos[d.photoId])?r.photos[d.photoId].img:null;
-    return Object.assign({},r,{photo:ph,done:!!d.done,recipeId:d.recipeId,photoId:d.photoId});
+    // その日に撮った写真があればそれを、なければ代表写真を出す
+    const own=(d.photoId&&r.photos&&r.photos[d.photoId])?r.photos[d.photoId].img:null;
+    return Object.assign({},r,{photo:own||coverOf(r),done:!!d.done,recipeId:d.recipeId,photoId:d.photoId});
   }
-  return d;
+  return Object.assign({},d,{photo:d.photo||d.image||null});
 }
 function findRecipeByName(name){
   const n=norm(name); if(!n) return null;
@@ -292,6 +293,7 @@ function recipeFields(o){
     ing:(o.ing||[]).map(x=>({n:String(x.n||""),amt:String(x.amt||""),cat:CATS.includes(x.cat)?x.cat:"その他"})).filter(x=>x.n),
     steps:(o.steps&&o.steps.length)?o.steps.map(String):null,
     tips:o.tips?String(o.tips):null, url:o.url?String(o.url):null,
+    image:o.image?String(o.image):null, source:o.source?String(o.source):null,
     time:Number(o.time)||null, kcal:Number(o.kcal)||null };
 }
 /* 献立の1品を帳面に登録する。写真があればそれを1枚目の履歴にする */
@@ -360,6 +362,62 @@ function startPick(){picking=true;picked={};lastFill=null;render()}
 function cellTap(k){if(picking){if(picked[k])delete picked[k];else picked[k]=true;render()}else openDay(k)}
 
 /* ---------- AI ---------- */
+/* ---------- 楽天レシピAPI ---------- */
+let RCATS=null;          // カテゴリ一覧（取得後キャッシュ）
+async function rakuten(path,params){
+  const r=await fetch(WORKER_URL,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mode:"rakuten",path,params:params||{}})});
+  if(!r.ok) throw new Error("楽天レシピの取得に失敗しました（"+r.status+"）");
+  const d=await r.json();
+  if(d.error) throw new Error(d.error);
+  return d;
+}
+async function rakutenCats(){
+  if(RCATS) return RCATS;
+  const d=await rakuten("CategoryList",{categoryType:"all"});
+  const R=(d.result)||{};
+  const out=[], midFull={};
+  ((R.large)||[]).forEach(c=>out.push({id:String(c.categoryId),name:c.categoryName,level:1}));
+  ((R.medium)||[]).forEach(c=>{
+    const full=`${c.parentCategoryId}-${c.categoryId}`;
+    midFull[String(c.categoryId)]=full;
+    out.push({id:full,name:c.categoryName,level:2});
+  });
+  ((R.small)||[]).forEach(c=>{
+    const parent=midFull[String(c.parentCategoryId)];
+    if(parent) out.push({id:`${parent}-${c.categoryId}`,name:c.categoryName,level:3});
+  });
+  RCATS=out;
+  return RCATS;
+}
+function rakutenToDish(x){
+  return { name:String(x.recipeTitle||"").trim(),
+    ing:(x.recipeMaterial||[]).map(m=>({n:String(m),amt:"",cat:"その他"})).filter(z=>z.n),
+    time:parseInt(String(x.recipeIndication||"").replace(/[^0-9]/g,""))||null,
+    kcal:null, steps:null, tips:null,
+    url:x.recipeUrl||null, image:x.foodImageUrl||x.mediumImageUrl||null, source:"rakuten" };
+}
+async function rakutenRanking(categoryId){
+  const d=await rakuten("CategoryRanking",{categoryId});
+  return ((d.result)||[]).map(rakutenToDish).filter(x=>x.name);
+}
+/* 献立づくりの参考にする候補をいくつかのカテゴリから集める */
+async function inspirationPool(n){
+  try{
+    const cats=await rakutenCats();
+    if(!cats.length) return [];
+    // 中・小カテゴリは料理が具体的なので、そちらを優先してランダムに選ぶ
+    const deep=cats.filter(c=>c.level>=2);
+    const src=deep.length>8?deep:cats;
+    const pick=[...src].sort(()=>Math.random()-0.5).slice(0,n||8);
+    const lists=await Promise.all(pick.map(c=>rakutenRanking(c.id).catch(()=>[])));
+    const all=[].concat(...lists);
+    const seen={}, out=[];
+    all.forEach(x=>{const k=norm(x.name); if(k&&!seen[k]){seen[k]=1;out.push(x)}});
+    return out;
+  }catch(e){ return []; }
+}
+
 async function askAI(prompt,system,maxTokens){
   if(!WORKER_URL) throw new Error("WORKER_URLが未設定です");
   const r=await fetch(WORKER_URL,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -379,10 +437,15 @@ const FMT=`各料理の形式: {"name":"料理名","time":15,"kcal":300,"ing":[{
 catは ${CATS.join(" / ")} のいずれか。timeは分、kcalは1人ぶんの目安。`;
 
 /* AIの提案を献立に入れる。同じ名前が帳面にあれば、AIの中身は捨てて帳面を使う */
+let RPOOL=[];   // 直近に取得した楽天レシピの候補
 function adopt(o){
   const id=findRecipeByName(o.name);
   if(id) return {dish:{recipeId:id}, reused:true};
   const r=recipeFields(o);
+  // 楽天の候補と同じ名前なら、写真とレシピのURLを引き継ぐ
+  const hit=RPOOL.find(x=>norm(x.name)===norm(o.name));
+  if(hit){ r.url=hit.url; r.image=hit.image; r.source="rakuten";
+    if(!r.ing.length) r.ing=hit.ing; if(!r.time) r.time=hit.time; }
   return {dish:r, reused:false};
 }
 async function generate(){
@@ -394,7 +457,9 @@ async function generate(){
   const b=$("genBtn"); b.disabled=true; b.innerHTML=`<span class="spin"></span> 考えています`;
   try{
     const book=Object.values(S.recipes).map(r=>r.name);
-    const recent=recentNames(10);
+    const seen=seenNames(60);
+    const pool=await inspirationPool(10);
+    RPOOL=pool;
     const list=targets.map(t=>{const d=fromKey(t.k);return `${t.k}(${WD[d.getDay()]}): ${t.need.map(kindNm).join("・")}`}).join("\n");
     const txt=await askAI(
 `次の日付の献立を考えてください。指定された枠だけ埋め、それ以外は含めないこと。
@@ -404,9 +469,17 @@ ${list}
 条件:
 - ${servings()}ぶん
 - 主菜はメインのおかず、副菜は野菜中心の小鉢、主食はご飯・パン・麺など
+- ${season()}の旬の食材を活かす
+- 味つけと調理法を散らす（${shuffle(["和食","洋食","中華","韓国風","エスニック"]).slice(0,3).join("・")}などを混ぜ、${shuffle(["焼く","煮る","蒸す","炒める","揚げる","和える"]).slice(0,3).join("・")}が偏らないように）
 - 食材を数日で使い回して買い物を減らす
-- 同じ料理を繰り返さない${recent.length?`。最近作った「${recent.join("、")}」は避ける`:""}
-${book.length?`- 我が家のレシピ帳にある「${book.slice(0,40).join("、")}」は、ちょうど合うときだけ同じ名前で入れてよい（無理に使わなくてよい）`:""}
+- 定番すぎる顔ぶれにせず、作ったことのない料理を必ず何品か入れる
+${seen.length?`- 過去に出した「${seen.join("、")}」とは違う料理にする`:""}
+${pool.length?`\n【料理はこの候補の中からえらんでください】実際に人気のあるレシピです。料理名は候補と一字一句そのまま書き写すこと。
+主菜・副菜・主食それぞれに合うものを選び、同じ日の組み合わせが重ならないようにしてください。
+どうしても合うものが無い枠（主食など）だけ、自分で考えてかまいません。
+
+候補:
+${pool.map(x=>"・"+x.name).join("\n")}`:""}
 
 ${FMT}
 出力はJSONのみ:
@@ -424,6 +497,21 @@ ${FMT}
     lastFill=n?{n,reused,prev}:null; picking=false; picked={}; render();
     toast(n?`${n}品たてました`:"提案を受け取れませんでした");
   }catch(e){toast(e.message);const bb=$("genBtn");if(bb){bb.disabled=false;bb.textContent="献立をたてる"}}
+}
+const shuffle=a=>[...a].sort(()=>Math.random()-0.5);
+function season(){
+  const m=today.getMonth()+1;
+  return m<=2||m===12?"冬":m<=5?"春":m<=8?"夏":"秋";
+}
+/* 過去に献立へ出した料理名（作った/作っていないを問わず）。同じ顔ぶれを避けるために使う */
+function seenNames(limit){
+  const out=[];
+  Object.keys(S.meals).sort().reverse().forEach(k=>{
+    KINDS.forEach(x=>{const d=dishData(S.meals[k][x.k]);
+      if(d&&d.name&&out.length<limit&&!out.includes(d.name))out.push(d.name)})
+  });
+  Object.values(S.recipes).forEach(r=>{if(r.name&&out.length<limit&&!out.includes(r.name))out.push(r.name)});
+  return out;
 }
 function recentNames(limit){
   const out=[];
@@ -500,13 +588,19 @@ function addDish(k,kk){
 async function swapDish(k,kk,isNew){
   const day=S.meals[k]||{}, cur=dishData(day[kk]);
   const others=KINDS.filter(x=>x.k!==kk).map(x=>{const o=dishData(day[x.k]);return o&&o.name}).filter(Boolean);
-  const recent=recentNames(10);
+  const recent=seenNames(30);
   toast("考えています…");
   try{
+    const pool=await inspirationPool(5); RPOOL=pool;
     const txt=await askAI(
 `${fromKey(k).getMonth()+1}月${fromKey(k).getDate()}日の${kindNm(kk)}を1品提案してください。
-${servings()}ぶん。${others.length?`同じ日の献立: ${others.join("、")}。重複しない組み合わせに。`:""}
-${cur&&cur.name?`「${cur.name}」以外で。`:""}${recent.length?`最近作った「${recent.join("、")}」も避ける。`:""}
+${servings()}ぶん。${season()}の旬を意識して。${others.length?`同じ日の献立: ${others.join("、")}。重複しない組み合わせに。`:""}
+${cur&&cur.name?`「${cur.name}」以外で。`:""}${recent.length?`過去に出した「${recent.join("、")}」も避ける。`:""}
+定番すぎないものを。${shuffle(["和食","洋食","中華","韓国風","エスニック"])[0]}寄りでもよい。
+${pool.length?`\n【この候補からえらんでください】料理名はそのまま書き写すこと。合うものが無いときだけ自分で考えてよい。
+
+候補:
+${pool.map(x=>"・"+x.name).join("\n")}`:""}
 
 ${FMT}
 出力はJSONのみ（料理1つのオブジェクト）。`, CHEF, 900);
@@ -551,7 +645,7 @@ function openRecipe(k,kk){
       :WORKER_URL?`<button class="btn wide ghost" id="stepBtn" onclick="makeSteps('${k}','${kk}')">つくり方をAIに出してもらう</button>`
       :`<div class="empty">つくり方はまだありません</div>`}
     ${d.tips?`<h2 class="sec">つくり方のコツ</h2><div class="card"><div style="font-size:14px">${esc(d.tips)}</div></div>`:""}
-    ${d.url?`<div class="note" style="margin-top:12px"><a href="${esc(d.url)}" target="_blank" rel="noopener">参考リンクを開く</a></div>`:""}
+    ${d.url?`<div class="note" style="margin-top:12px"><a href="${esc(d.url)}" target="_blank" rel="noopener">${d.source==="rakuten"?"楽天レシピで元の手順を見る":"参考リンクを開く"}</a></div>`:""}
     <button class="btn wide quiet" style="margin-top:14px" onclick="editDish('${k}','${kk}')">アレンジ・編集する</button>
     ${d.recipeId?`<div class="note" style="margin-top:8px;text-align:center">編集するとレシピ帳が更新され、次に同じ料理が出たときも反映されます</div>`
       :`<div class="note" style="margin-top:8px;text-align:center">編集すると自動でレシピ帳に登録されます</div>`}`;
@@ -761,9 +855,12 @@ function renderBook(){
       <select class="field" style="width:auto;padding:7px 9px" onchange="save(['settings','kids'],Number(this.value))">
         ${[0,1,2,3,4].map(n=>`<option value="${n}" ${S.settings.kids===n?"selected":""}>子ども${n}人</option>`).join("")}</select>
     </div>
+    ${WORKER_URL?`<button class="btn wide ghost" style="margin-bottom:10px" onclick="openSearch()">人気レシピをさがす</button>`:""}
     ${list.length?`<input class="field" id="bookQ" placeholder="料理名でさがす" value="${esc(bookQ)}"
         oninput="bookQ=this.value;drawBookGrid()" style="margin-bottom:10px">
-      <div id="bookGrid"></div>`
+      <div id="bookGrid"></div>
+      <div class="note" style="text-align:center;margin-top:16px">
+        <a href="https://recipe.rakuten.co.jp/" target="_blank" rel="noopener">Supported by 楽天レシピ</a></div>`
       :`<div class="empty">レシピ帳はまだ空です。<br>献立の料理カードにある「帳面に入れる」を押すと、<br>その料理の材料と手順がここに残ります。<br><br>一度入れておけば、次に同じ料理が出てきたときも<br>編集した内容がそのまま使われます。</div>`}`;
   if(list.length)drawBookGrid();
 }
@@ -794,17 +891,19 @@ function openBook(id){
     ${r.steps&&r.steps.length?`<h2 class="sec">つくり方</h2><div class="card"><ol class="steps">
       ${r.steps.map(s=>`<li>${esc(s)}</li>`).join("")}</ol></div>`:""}
     ${r.tips?`<h2 class="sec">コツ</h2><div class="card"><div style="font-size:14px">${esc(r.tips)}</div></div>`:""}
-    ${r.url?`<div class="note" style="margin-top:12px"><a href="${esc(r.url)}" target="_blank" rel="noopener">参考リンクを開く</a></div>`:""}
+    ${r.url?`<div class="note" style="margin-top:12px"><a href="${esc(r.url)}" target="_blank" rel="noopener">${r.source==="rakuten"?"楽天レシピで元の手順を見る":"参考リンクを開く"}</a></div>`:""}
     <button class="btn wide" style="margin-top:14px" onclick="bookToMeal('${id}')">この料理を献立に入れる</button>
     <button class="btn wide quiet" style="margin-top:8px" onclick="editBook('${id}')">編集する</button>
     <button class="btn wide quiet" style="margin-top:8px;color:var(--danger)" onclick="delBook('${id}')">レシピ帳から削除</button>`;
   $("sheet").classList.add("on"); $("sheetBody").dataset.day="";
 }
 function coverOf(r){
-  if(!r.photos) return null;
-  if(r.cover&&r.photos[r.cover]) return r.photos[r.cover].img;
-  const ph=Object.values(r.photos).sort((a,b)=>(a.date<b.date?1:-1));
-  return ph[0]?ph[0].img:null;
+  if(r.photos){
+    if(r.cover&&r.photos[r.cover]) return r.photos[r.cover].img;
+    const ph=Object.values(r.photos).sort((a,b)=>(a.date<b.date?1:-1));
+    if(ph[0]) return ph[0].img;
+  }
+  return r.image||null;   // 自分の写真がなければ楽天レシピの画像
 }
 function editBook(id){
   const r=S.recipes[id];
@@ -930,6 +1029,63 @@ function bookToMealGo(id){
   if(!k){toast("日付をえらんでください");return}
   const day=JSON.parse(JSON.stringify(S.meals[k]||{})); day[kk]={recipeId:id};
   save(["meals",k],day); closeSheet(); toast(`${k} の${kindNm(kk)}に入れました`);
+}
+
+/* ---------- 人気レシピをさがす（楽天レシピ） ---------- */
+async function openSearch(){
+  $("sheetBody").innerHTML=`<div class="sheetHead"><h3>人気レシピをさがす</h3>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+    <div class="note"><span class="spin" style="border-color:rgba(0,0,0,.2);border-top-color:#16324F"></span> カテゴリを読み込んでいます</div>`;
+  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
+  try{
+    const cats=await rakutenCats();
+    $("sheetBody").innerHTML=`<div class="sheetHead"><h3>人気レシピをさがす</h3>
+        <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+      <div class="note">カテゴリをえらぶと、いま人気のレシピが出ます。</div>
+      <div class="card" style="margin-top:10px">${cats.map(c=>`<div class="item">
+        <div class="grow"><div class="t">${esc(c.name)}</div></div>
+        <button class="mini" onclick="showRanking('${c.id}','${esc(c.name)}')">見る</button>
+        </div>`).join("")}</div>
+      <div class="note" style="text-align:center;margin-top:12px">
+        <a href="https://recipe.rakuten.co.jp/" target="_blank" rel="noopener">Supported by 楽天レシピ</a></div>`;
+  }catch(e){
+    $("sheetBody").innerHTML=`<div class="sheetHead"><h3>人気レシピをさがす</h3>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+      <div class="empty">${esc(e.message)}<br><br>WorkerにRAKUTEN_APP_IDが設定されているか確認してください。</div>`;
+  }
+}
+let RLIST=[];
+async function showRanking(catId,catName){
+  $("sheetBody").innerHTML=`<div class="sheetHead"><h3>${esc(catName)}</h3>
+      <button class="btn quiet" onclick="openSearch()">戻る</button></div>
+    <div class="note"><span class="spin" style="border-color:rgba(0,0,0,.2);border-top-color:#16324F"></span> 読み込んでいます</div>`;
+  try{
+    RLIST=await rakutenRanking(catId);
+    $("sheetBody").innerHTML=`<div class="sheetHead"><h3>${esc(catName)}</h3>
+        <button class="btn quiet" onclick="openSearch()">戻る</button></div>
+      ${RLIST.length?RLIST.map((x,i)=>`<div class="dish">
+        ${x.image?`<div class="pic"><img src="${esc(x.image)}" alt="${esc(x.name)}"></div>`:""}
+        <div class="body">
+          <div class="nm">${esc(x.name)}</div>
+          <div class="meta">${x.time?`${x.time}分・`:""}${esc((x.ing||[]).slice(0,5).map(m=>m.n).join("、"))}</div>
+          <div class="acts" style="margin-top:9px">
+            <button class="mini gold" onclick="adoptRakuten(${i})">帳面に入れる</button>
+            <a class="mini line" href="${esc(x.url)}" target="_blank" rel="noopener">楽天で見る</a>
+          </div>
+        </div></div>`).join("")
+        :`<div class="empty">レシピが取得できませんでした</div>`}
+      <div class="note" style="text-align:center;margin-top:12px">
+        <a href="https://recipe.rakuten.co.jp/" target="_blank" rel="noopener">Supported by 楽天レシピ</a></div>`;
+    $("sheetBody").scrollTop=0;
+  }catch(e){ toast(e.message); }
+}
+function adoptRakuten(i){
+  const x=RLIST[i]; if(!x)return;
+  const dup=findRecipeByName(x.name);
+  if(dup){ toast("もう帳面にあります"); return; }
+  const id=uid();
+  saveQuiet(["recipes",id],Object.assign(recipeFields(x),{at:Date.now()}));
+  render(); toast("帳面に入れました");
 }
 </script>
 </body>
