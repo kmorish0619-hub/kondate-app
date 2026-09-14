@@ -134,13 +134,15 @@ h2.sec:first-child{margin-top:2px}
 #sheet{position:fixed;inset:0;z-index:50;display:none}
 #sheet.on{display:block}
 #sheetBg{position:absolute;inset:0;background:rgba(20,30,42,.45)}
-#sheetBody{position:absolute;left:0;right:0;bottom:0;max-height:92vh;overflow-y:auto;background:var(--paper);
-  border-radius:18px 18px 0 0;padding:0 16px calc(24px + env(safe-area-inset-bottom));animation:up .2s ease-out}
+#sheetBody{position:absolute;left:0;right:0;bottom:0;max-height:92vh;background:var(--paper);
+  border-radius:18px 18px 0 0;padding:0;animation:up .2s ease-out;
+  display:flex;flex-direction:column;overflow:hidden}
 @keyframes up{from{transform:translateY(14px);opacity:.6}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion:reduce){#sheetBody{animation:none}}
-.sheetHead{position:sticky;top:0;z-index:6;background:var(--paper);display:flex;align-items:center;
-  justify-content:space-between;gap:10px;padding:15px 0 10px;margin-bottom:2px;
-  box-shadow:0 6px 10px -8px rgba(20,30,42,.25)}
+.sheetScroll{overflow-y:auto;flex:1 1 auto;padding:0 16px calc(24px + env(safe-area-inset-bottom))}
+.sheetHead{flex:0 0 auto;background:var(--paper);display:flex;align-items:center;
+  justify-content:space-between;gap:10px;padding:15px 16px 10px;margin:0;
+  border-radius:18px 18px 0 0;box-shadow:0 6px 10px -8px rgba(20,30,42,.25)}
 .sheetHead h3{font-family:var(--mincho);font-size:18px;font-weight:400;margin:0}
 #sheetClose{position:absolute;top:10px;right:14px;z-index:60;width:44px;height:44px;border-radius:50%;
   background:rgba(22,50,79,.92);color:#fff;font-size:22px;line-height:44px;text-align:center;
@@ -371,10 +373,11 @@ let RCATS=null;          // カテゴリ一覧（取得後キャッシュ）
 async function rakuten(path,params){
   const r=await fetch(WORKER_URL,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({mode:"rakuten",path,params:params||{}})});
+  let d=null;
+  try{ d=await r.json(); }catch(e){}
+  if(d&&d.error) throw new Error(d.error);
   if(!r.ok) throw new Error("楽天レシピの取得に失敗しました（"+r.status+"）");
-  const d=await r.json();
-  if(d.error) throw new Error(d.error);
-  return d;
+  return d||{};
 }
 async function rakutenCats(){
   if(RCATS) return RCATS;
@@ -538,7 +541,25 @@ function undoFill(){
 
 /* ---------- 1日のシート ---------- */
 function openDay(k){drawDay(k);$("sheet").classList.add("on")}
+function sheetTop(){const w=$("sheetBody").querySelector(".sheetScroll");if(w)w.scrollTop=0;$("sheetBody").scrollTop=0}
 function closeSheet(){$("sheet").classList.remove("on")}
+/* シートの中身が差し替わるたびに、見出しを固定して残りをスクロール領域にまとめる */
+(function(){
+  const box=$("sheetBody");
+  const mo=new MutationObserver(()=>{
+    const head=box.querySelector(":scope > .sheetHead");
+    if(!head) return;
+    const rest=[...box.children].filter(el=>el!==head);
+    if(rest.length===1&&rest[0].classList.contains("sheetScroll")) return;
+    mo.disconnect();
+    const wrap=document.createElement("div");
+    wrap.className="sheetScroll";
+    rest.forEach(el=>wrap.appendChild(el));
+    box.appendChild(wrap);
+    mo.observe(box,{childList:true});
+  });
+  mo.observe(box,{childList:true});
+})();
 function dishCard(k,kk,raw){
   const d=dishData(raw);
   if(!d||!d.name) return `<button class="slotAdd" style="width:100%" onclick="addDish('${k}','${kk}')">＋ ${kindNm(kk)}を追加</button>`;
@@ -592,7 +613,7 @@ function addDish(k,kk){
     ${WORKER_URL?`<button class="btn wide" style="margin-bottom:8px" onclick="swapDish('${k}','${kk}',true)">AIに提案してもらう</button>`:""}
     <button class="btn wide ghost" style="margin-bottom:8px" onclick="pickFromBook('${k}','${kk}')">レシピ帳からえらぶ</button>
     <button class="btn wide quiet" onclick="editDish('${k}','${kk}',true)">自分で入力する</button>`;
-  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); sheetTop();
 }
 async function swapDish(k,kk,isNew){
   const day=S.meals[k]||{}, cur=dishData(day[kk]);
@@ -628,7 +649,7 @@ function pickFromBook(k,kk){
       <div class="s">${r.cooked?`${r.cooked}回つくった`:"まだ作っていない"}${r.time?`・${r.time}分`:""}</div></div>
       <button class="mini" onclick="putDish('${k}','${kk}',{recipeId:'${r.id}'});toast('入れました')">えらぶ</button>
       </div>`).join("")}</div>`;
-  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); sheetTop();
 }
 
 /* ---------- レシピ詳細・編集 ---------- */
@@ -659,7 +680,7 @@ function openRecipe(k,kk){
     ${d.recipeId?`<div class="note" style="margin-top:8px;text-align:center">編集するとレシピ帳が更新され、次に同じ料理が出たときも反映されます</div>`
       :`<div class="note" style="margin-top:8px;text-align:center">編集すると自動でレシピ帳に登録されます</div>`}`;
   $("sheetBody").dataset.day="";
-  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); sheetTop();
 }
 async function makeSteps(k,kk){
   const raw=(S.meals[k]||{})[kk], d=dishData(raw);
@@ -696,7 +717,7 @@ function editDish(k,kk,isNew){
     <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(d.tips||"")}">
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" inputmode="url" value="${esc(d.url||"")}" placeholder="https://...">
     <button class="btn wide" style="margin-top:14px" onclick="saveDish('${k}','${kk}')">保存してレシピ帳に反映</button>`;
-  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); sheetTop();
 }
 function saveDish(k,kk){
   const name=$("eN").value.trim(); if(!name){toast("料理名を入れてください");return}
@@ -946,7 +967,7 @@ function editBook(id){
     <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(r.tips||"")}">
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" value="${esc(r.url||"")}">
     <button class="btn wide" style="margin-top:14px" onclick="saveBook('${id}')">保存</button>`;
-  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); sheetTop();
 }
 function setCover(id,pid){
   const r=JSON.parse(JSON.stringify(S.recipes[id])); r.cover=pid;
@@ -994,7 +1015,7 @@ function askWhichToDrop(id,data){
       <div class="grow"><div class="t">${esc(p.date.replace(/-/g,"/"))}${r.cover===pid?"　★代表":""}</div></div>
       <button class="mini line" style="color:var(--danger)" onclick="dropAndAdd('${id}','${pid}')">これを消す</button>
       </div>`).join("")}</div>`;
-  $("sheetBody").scrollTop=0;
+  sheetTop();
 }
 function dropAndAdd(id,pid){
   if(!pendingPhoto)return;
@@ -1045,7 +1066,7 @@ async function openSearch(){
   $("sheetBody").innerHTML=`<div class="sheetHead"><h3>人気レシピをさがす</h3>
       <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     <div class="note"><span class="spin" style="border-color:rgba(0,0,0,.2);border-top-color:#16324F"></span> カテゴリを読み込んでいます</div>`;
-  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); sheetTop();
   try{
     const cats=await rakutenCats();
     $("sheetBody").innerHTML=`<div class="sheetHead"><h3>人気レシピをさがす</h3>
@@ -1085,7 +1106,7 @@ async function showRanking(catId,catName){
         :`<div class="empty">レシピが取得できませんでした</div>`}
       <div class="note" style="text-align:center;margin-top:12px">
         <a href="https://recipe.rakuten.co.jp/" target="_blank" rel="noopener">Supported by 楽天レシピ</a></div>`;
-    $("sheetBody").scrollTop=0;
+    sheetTop();
   }catch(e){ toast(e.message); }
 }
 function adoptRakuten(i){
