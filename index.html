@@ -38,7 +38,7 @@ header .row{display:flex;align-items:center;justify-content:space-between;gap:10
 #hTitle{font-family:var(--mincho);font-size:21px;font-weight:400;margin:0;text-align:center}
 #hSub{font-size:11px;color:var(--grey);text-align:center}
 .navbtn{font-size:22px;color:var(--ink);padding:2px 12px;font-family:var(--mincho)}
-main{padding:14px 16px 20px;max-width:640px;margin:0 auto}
+main{padding:14px 16px 20px;max-width:640px;margin:0 auto;min-height:70vh}
 
 .week{display:grid;grid-template-columns:repeat(7,1fr);font-size:11px;color:var(--grey);text-align:center;padding-bottom:5px}
 .week .sun{color:#B2564A}.week .sat{color:#4A7FA8}
@@ -49,6 +49,14 @@ main{padding:14px 16px 20px;max-width:640px;margin:0 auto}
 .cell.out .dnum{color:#CBC9C2}
 .cell.today{box-shadow:inset 0 0 0 2px var(--yuzu)}
 .cell.pick{background:#EAF0F6;border-color:var(--ink)}
+.cell.sel{box-shadow:inset 0 0 0 2px var(--ink)}
+.prow{display:flex;align-items:center;gap:7px;padding:7px 0;border-bottom:1px solid var(--line)}
+.prow:last-of-type{border-bottom:none}
+.pk{flex:none;width:34px;font-size:11px;color:#fff;text-align:center;padding:3px 0;border-radius:4px}
+.pk.main{background:var(--main)}.pk.side{background:var(--side)}
+.pnm{flex:1;text-align:left;font-size:14.5px;font-weight:600;color:var(--ink);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.padd{flex:1;text-align:left;font-size:13px;color:var(--grey)}
 .dnum{font-family:var(--mincho);font-size:15px;line-height:1.1;color:var(--ink)}
 .cell.sun .dnum{color:#B2564A}.cell.sat .dnum{color:#4A7FA8}
 .dots{display:flex;gap:3px}
@@ -223,16 +231,17 @@ const FIREBASE_CONFIG = {
 };
 const PHOTO_MAX = 1200, PHOTO_Q = 0.7;
 const PHOTO_KEEP = 6;   // レシピ1つあたりに残す写真の枚数
+const COOK_DAYS  = 60;  // 料理タブで先まで見られる日数
 /* ============================================================ */
 
 const KINDS=[{k:"main",nm:"主菜"},{k:"side",nm:"副菜"}];
 const CATS=["野菜・大豆製品","魚","肉","卵","調味料","その他"];
 const WD=["日","月","火","水","木","金","土"];
 
-let DB=null, S={meals:{}, recipes:{}, shopping:{checked:{},manual:{}}, settings:{adults:2,kids:0}};
+let DB=null, S={meals:{}, recipes:{}, shopping:{}, settings:{adults:2,kids:0}};
 const today=new Date();
 let view={y:today.getFullYear(),m:today.getMonth()};
-let tab="plan", picking=false, picked={}, cookDate=null, lastFill=null, bookQ="";
+let tab="plan", picking=false, picked={}, cookDate=null, lastFill=null, bookQ="", bookSort="at", selDate=null;
 
 const $=id=>document.getElementById(id);
 const pad=n=>String(n).padStart(2,"0");
@@ -257,8 +266,7 @@ function bootStore(){
     try{
       firebase.initializeApp(FIREBASE_CONFIG); DB=firebase.database();
       DB.ref("/").on("value",s=>{const v=s.val()||{};
-        S={meals:v.meals||{}, recipes:v.recipes||{},
-           shopping:{checked:(v.shopping&&v.shopping.checked)||{},manual:(v.shopping&&v.shopping.manual)||{}},
+        S={meals:v.meals||{}, recipes:v.recipes||{}, shopping:v.shopping||{},
            settings:Object.assign({adults:2,kids:0},v.settings||{})};
         render();});
       return;
@@ -332,7 +340,10 @@ function render(){
   if(tab==="plan"){$("hTitle").textContent=`${view.y}年 ${view.m+1}月`;
     $("hSub").textContent=picking?"献立をたてる日をえらぶ":`${countMonth()}品ぶん`;renderPlan()}
   if(tab==="cook"){$("hTitle").textContent="料理をする";$("hSub").textContent=servings();renderCook()}
-  if(tab==="buy"){$("hTitle").textContent="買い物リスト";$("hSub").textContent="これから7日ぶん";renderBuy()}
+  if(tab==="buy"){$("hTitle").textContent="買い物リスト";
+    const L=S.shopping&&S.shopping.list;
+    $("hSub").textContent=L?`${L.from.slice(5).replace("-","/")}〜${L.to.slice(5).replace("-","/")} のぶん`:"まだリストがありません";
+    renderBuy()}
   if(tab==="book"){$("hTitle").textContent="レシピ帳";
     $("hSub").textContent=`${Object.keys(S.recipes).length}品たまっています`;renderBook()}
 }
@@ -347,7 +358,7 @@ function renderPlan(){
     const d=addDays(start,i), k=key(d), day=S.meals[k]||{}, out=d.getMonth()!==view.m, wd=d.getDay();
     let dots="",photo="";
     KINDS.forEach(x=>{const dd=dishData(day[x.k]);if(dd&&dd.name){dots+=`<span class="dot ${x.k}"></span>`;if(dd.photo&&!photo)photo=dd.photo}});
-    cells+=`<button class="cell ${out?"out":""} ${k===key(today)?"today":""} ${wd===0?"sun":""} ${wd===6?"sat":""} ${picked[k]?"pick":""}"
+    cells+=`<button class="cell ${out?"out":""} ${k===key(today)?"today":""} ${wd===0?"sun":""} ${wd===6?"sat":""} ${picked[k]?"pick":""} ${(!picking&&k===selDate)?"sel":""}"
       onclick="cellTap('${k}')"><span class="dnum">${d.getDate()}</span><span class="dots">${dots}</span>
       ${photo?`<img class="thumb" src="${photo}" alt="">`:""}${picked[k]?`<span class="check">✓</span>`:""}</button>`;
   }
@@ -360,13 +371,42 @@ function renderPlan(){
     ${picking?`<div class="note" style="margin-bottom:9px">必要な日数だけタップ。えらんだ日の空いている枠だけ埋まります。</div>`:""}
     ${bar}
     <div class="week">${WD.map((w,i)=>`<div class="${i===0?"sun":i===6?"sat":""}">${w}</div>`).join("")}</div>
-    <div class="grid">${cells}</div>`;
+    <div class="grid">${cells}</div>
+    ${(!picking&&selDate)?dayPanel(selDate):`<div class="note" style="text-align:center;margin-top:16px">日付をタップすると、その日の献立が下に出ます</div>`}`;
   if(picking){const n=Object.keys(picked).length;
     $("pickBar").innerHTML=`<button class="btn quiet" onclick="picking=false;picked={};render()">やめる</button>
       <button class="btn" id="genBtn" ${n?"":"disabled"} onclick="generate()">${n}日ぶんの献立をたてる</button>`}
 }
+/* カレンダーの下に出る、その日の献立 */
+function dayPanel(k){
+  const d=fromKey(k), day=S.meals[k]||{};
+  const rows=KINDS.map(x=>{
+    const dd=dishData(day[x.k]);
+    if(!dd||!dd.name) return `<div class="prow">
+      <span class="pk ${x.k}">${x.nm}</span>
+      <button class="padd" onclick="addDish('${k}','${x.k}')">＋ 追加する</button></div>`;
+    return `<div class="prow">
+      <span class="pk ${x.k}">${x.nm}</span>
+      <button class="pnm" onclick="openRecipe('${k}','${x.k}')">${esc(dd.name)}${dd.done?" ✓":""}</button>
+      ${WORKER_URL?`<button class="mini line" onclick="swapDish('${k}','${x.k}')">変更</button>`:""}
+      <button class="mini line" style="color:var(--danger)" onclick="rmDish('${k}','${x.k}')">外す</button></div>`;
+  }).join("");
+  return `<div class="card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <b style="font-family:var(--mincho);font-size:17px;font-weight:400">${d.getMonth()+1}月${d.getDate()}日（${WD[d.getDay()]}）</b>
+      <button class="mini line" onclick="selDate=null;render()">閉じる</button>
+    </div>
+    <input class="field" style="margin-bottom:10px" placeholder="（例：鍋の日、カレーの日など）"
+      value="${esc(day.label||"")}" onchange="saveLabel('${k}',this.value)">
+    ${rows}
+    <button class="btn wide quiet" style="margin-top:10px" onclick="cookDate='${k}';setTab('cook')">この日の料理を見る</button>
+  </div>`;
+}
 function startPick(){picking=true;picked={};lastFill=null;render()}
-function cellTap(k){if(picking){if(picked[k])delete picked[k];else picked[k]=true;render()}else openDay(k)}
+function cellTap(k){
+  if(picking){if(picked[k])delete picked[k];else picked[k]=true;render();return}
+  selDate=(selDate===k)?null:k; render();
+}
 
 /* ---------- AI ---------- */
 /* ---------- 楽天レシピAPI ---------- */
@@ -452,7 +492,8 @@ function parseJSON(t){
     while((m=re.exec(body))){ try{ out.push(JSON.parse(m[0])) }catch(e2){} }
     if(out.length) return out;
   }
-  throw new Error("提案をうまく読み取れませんでした。日数を減らして試してください");
+  const peek=body.replace(/\s+/g," ").slice(0,90);
+  throw new Error("提案を読み取れませんでした: "+(peek||"応答が空でした"));
 }
 const CHEF="あなたは日本の家庭料理に詳しい献立プランナーです。平日に無理なく作れる現実的な料理を選びます。";
 const FMT=`各料理の形式: {"name":"料理名","time":15,"kcal":300,"ing":[{"n":"鶏もも肉","amt":"200g","cat":"肉"}]}
@@ -479,14 +520,42 @@ async function generate(){
     return {k, need:KINDS.filter(x=>{const dd=dishData(day[x.k]);return !(dd&&dd.name)}).map(x=>x.k)}
   }).filter(t=>t.need.length);
   if(!targets.length){toast("えらんだ日はもう埋まっています");return}
-  const b=$("genBtn"); b.disabled=true; b.innerHTML=`<span class="spin"></span> 考えています`;
+
+  const b=$("genBtn"); b.disabled=true;
+  const prev={}; let n=0, reused=0, failed=0;
   try{
-    const book=Object.values(S.recipes).map(r=>r.name);
-    const seen=seenNames(60);
-    const pool=await inspirationPool(14);
-    RPOOL=pool;
-    const list=targets.map(t=>{const d=fromKey(t.k);return `${t.k}(${WD[d.getDay()]}): ${t.need.map(kindNm).join("・")}`}).join("\n");
-    const txt=await askAI(
+    RPOOL=await inspirationPool(14);
+    // 一度に頼む量が多いと応答が途中で切れるので、3日ずつに分けて頼む
+    const chunks=[];
+    for(let i=0;i<targets.length;i+=3) chunks.push(targets.slice(i,i+3));
+    for(let ci=0;ci<chunks.length;ci++){
+      b.innerHTML=`<span class="spin"></span> 考えています（${ci+1}／${chunks.length}）`;
+      try{
+        const part=await askPlan(chunks[ci], n);
+        part.forEach(p=>{
+          const t=chunks[ci].find(x=>x.k===p.date); if(!t)return;
+          if(!(p.date in prev)) prev[p.date]=S.meals[p.date]?JSON.parse(JSON.stringify(S.meals[p.date])):null;
+          const day=JSON.parse(JSON.stringify(S.meals[p.date]||{}));
+          t.need.forEach(kk=>{const a=adopt(p[kk]); if(!a)return;
+            day[kk]=a.dish; n++; if(a.reused||a.fromPool)reused++;});
+          saveQuiet(["meals",p.date],day);
+        });
+      }catch(e){ failed++; console.warn(e); if(chunks.length===1) throw e; }
+    }
+    lastFill=n?{n,reused,prev}:null; picking=false; picked={}; render();
+    toast(n? (failed?`${n}品たてました（一部できませんでした）`:`${n}品たてました`) : "提案を受け取れませんでした");
+  }catch(e){
+    toast(e.message);
+    const bb=$("genBtn"); if(bb){bb.disabled=false;bb.textContent="献立をたてる"}
+  }
+}
+/* 数日ぶんの献立をAIに頼む。返ってくるのは料理名だけ */
+async function askPlan(group, already){
+  const book=Object.values(S.recipes).map(r=>r.name);
+  const seen=seenNames(40);
+  const list=group.map(t=>{const d=fromKey(t.k);
+    return `${t.k}(${WD[d.getDay()]}): ${t.need.map(kindNm).join("・")}`}).join("\n");
+  const txt=await askAI(
 `次の日付の献立を考えてください。指定された枠だけ埋め、それ以外は含めないこと。
 
 ${list}
@@ -497,37 +566,25 @@ ${list}
 - ${season()}の旬の食材を活かす
 - 味つけと調理法を散らす（${shuffle(["和食","洋食","中華","韓国風","エスニック"]).slice(0,3).join("・")}などを混ぜ、${shuffle(["焼く","煮る","蒸す","炒める","揚げる","和える"]).slice(0,3).join("・")}が偏らないように）
 - 食材を数日で使い回して買い物を減らす
-- 定番すぎる顔ぶれにせず、作ったことのない料理を必ず何品か入れる
+- 定番すぎる顔ぶれにしない
 ${seen.length?`- 過去に出した「${seen.join("、")}」とは違う料理にする`:""}
-${pool.length?`\n【料理はこの候補の中からえらんでください】実際に人気のあるレシピです。料理名は候補と一字一句そのまま書き写すこと。
-主菜・副菜それぞれに合うものを選び、同じ日の組み合わせが重ならないようにしてください。
+${RPOOL.length?`\n【料理はこの候補の中からえらんでください】実際に人気のあるレシピです。料理名は一字一句そのまま書き写すこと。
 どうしても合うものが無いときだけ、自分で考えてかまいません。
 
 候補:
-${pool.map(x=>"・"+x.name).join("\n")}`:""}
+${shuffle(RPOOL).slice(0,40).map(x=>"・"+x.name).join("\n")}`:""}
 
 出力はJSONのみ。料理名だけを書き、材料や手順は書かないでください。
-[{"date":"YYYY-MM-DD","main":"料理名","side":"料理名"}]`, CHEF, 2000);
-    const plan=parseJSON(txt);
-    const prev={}; let n=0, reused=0;
-    plan.forEach(p=>{
-      const t=targets.find(x=>x.k===p.date); if(!t) return;
-      prev[p.date]=S.meals[p.date]?JSON.parse(JSON.stringify(S.meals[p.date])):null;
-      const day=JSON.parse(JSON.stringify(S.meals[p.date]||{}));
-      t.need.forEach(kk=>{const a=adopt(p[kk]); if(!a)return;
-        day[kk]=a.dish; n++; if(a.reused||a.fromPool)reused++;});
-      saveQuiet(["meals",p.date],day);
-    });
-    lastFill=n?{n,reused,prev}:null; picking=false; picked={}; render();
-    toast(n?`${n}品たてました`:"提案を受け取れませんでした");
-  }catch(e){toast(e.message);const bb=$("genBtn");if(bb){bb.disabled=false;bb.textContent="献立をたてる"}}
+[{"date":"YYYY-MM-DD","main":"料理名","side":"料理名"}]`, CHEF, 1000);
+  const v=parseJSON(txt);
+  return Array.isArray(v)?v:[v];
 }
 const shuffle=a=>[...a].sort(()=>Math.random()-0.5);
 function season(){
   const m=today.getMonth()+1;
   return m<=2||m===12?"冬":m<=5?"春":m<=8?"夏":"秋";
 }
-/* 過去に献立へ出した料理名（作った/作っていないを問わず）。同じ顔ぶれを避けるために使う */
+/* 過去に献立へ出した料理名。同じ顔ぶれを避けるために使う */
 function seenNames(limit){
   const out=[];
   Object.keys(S.meals).sort().reverse().forEach(k=>{
@@ -552,7 +609,6 @@ function undoFill(){
 }
 
 /* ---------- 1日のシート ---------- */
-function openDay(k){drawDay(k);$("sheet").classList.add("on")}
 function sheetTop(){const w=$("sheetBody").querySelector(".sheetScroll");if(w)w.scrollTop=0;$("sheetBody").scrollTop=0}
 function closeSheet(){$("sheet").classList.remove("on")}
 /* シートの中身が差し替わるたびに、見出しを固定して残りをスクロール領域にまとめる */
@@ -598,17 +654,7 @@ function dishCard(k,kk,raw){
       </div>
     </div></div>`;
 }
-function drawDay(k){
-  const d=fromKey(k), day=S.meals[k]||{};
-  $("sheetBody").innerHTML=`
-    <div class="sheetHead"><h3>${d.getMonth()+1}月${d.getDate()}日（${WD[d.getDay()]}）</h3>
-      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
-    <input class="field" style="margin-bottom:12px" placeholder="（例：鍋の日、カレーの日など）"
-      value="${esc(day.label||"")}" onchange="saveLabel('${k}',this.value)">
-    ${KINDS.map(x=>dishCard(k,x.k,day[x.k])).join("")}`;
-  $("sheetBody").dataset.day=k;
-}
-function refreshDay(k){if($("sheet").classList.contains("on")&&$("sheetBody").dataset.day===k)drawDay(k)}
+function refreshDay(k){render()}
 function saveLabel(k,v){const day=Object.assign({},S.meals[k]||{});if(v.trim())day.label=v.trim();else delete day.label;save(["meals",k],day)}
 function rmDish(k,kk){
   if(!confirm(`${kindNm(kk)}を献立から外しますか？（レシピ帳は消えません）`))return;
@@ -621,7 +667,7 @@ function putDish(k,kk,dish){
 }
 function addDish(k,kk){
   $("sheetBody").innerHTML=`<div class="sheetHead"><h3>${kindNm(kk)}を追加</h3>
-      <button class="btn quiet" onclick="drawDay('${k}')">戻る</button></div>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     ${WORKER_URL?`<button class="btn wide" style="margin-bottom:8px" onclick="swapDish('${k}','${kk}',true)">AIに提案してもらう</button>`:""}
     <button class="btn wide ghost" style="margin-bottom:8px" onclick="pickFromBook('${k}','${kk}')">レシピ帳からえらぶ</button>
     <button class="btn wide quiet" onclick="editDish('${k}','${kk}',true)">自分で入力する</button>`;
@@ -655,7 +701,7 @@ function pickFromBook(k,kk){
   const list=bookList();
   if(!list.length){toast("レシピ帳はまだ空です");return}
   $("sheetBody").innerHTML=`<div class="sheetHead"><h3>レシピ帳からえらぶ</h3>
-      <button class="btn quiet" onclick="drawDay('${k}')">戻る</button></div>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     <div class="card">${list.map(r=>`<div class="item">
       <div class="grow"><div class="t">${esc(r.name)}</div>
       <div class="s">${r.cooked?`${r.cooked}回つくった`:"まだ作っていない"}${r.time?`・${r.time}分`:""}</div></div>
@@ -672,7 +718,7 @@ function openRecipe(k,kk){
   const hist=r&&r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>${esc(d.name)}</h3>
-      <button class="btn quiet" onclick="drawDay('${k}')">戻る</button></div>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     ${hist.length?`<div class="photoStrip">${hist.map(([id,p])=>`<figure>
         <img src="${p.img}" alt=""><figcaption>${esc(p.date.slice(5).replace("-","/"))}</figcaption></figure>`).join("")}</div>`
       :d.photo?`<img src="${d.photo}" alt="" style="width:100%;border-radius:12px;margin-bottom:10px">`:""}
@@ -720,7 +766,7 @@ function editDish(k,kk,isNew){
   const d=isNew?{name:"",ing:[],steps:[]}:Object.assign({ing:[],steps:[]},dishData((S.meals[k]||{})[kk]));
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>${isNew?kindNm(kk)+"を入力":"アレンジ・編集"}</h3>
-      <button class="btn quiet" onclick="drawDay('${k}')">戻る</button></div>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     <div class="lbl">料理名</div><input class="field" id="eN" value="${esc(d.name)}" placeholder="肉じゃが">
     <div class="row2" style="margin-top:10px">
       <div><div class="lbl">調理時間（分）</div><input class="field" id="eT" type="number" inputmode="numeric" value="${d.time||""}"></div>
@@ -810,7 +856,7 @@ function pickPhoto(ev,k,kk){
 function shiftCook(n){
   if(!cookDate)cookDate=key(today);
   const d=addDays(fromKey(cookDate),n);
-  const min=today, max=addDays(today,6);
+  const min=today, max=addDays(today,COOK_DAYS-1);
   if(d<new Date(min.getFullYear(),min.getMonth(),min.getDate())) return;
   if(d>new Date(max.getFullYear(),max.getMonth(),max.getDate())) return;
   cookDate=key(d); render();
@@ -818,12 +864,13 @@ function shiftCook(n){
 /* 料理タブは左右にフリックして日付を移動できる */
 (function(){
   let x0=null,y0=null;
-  const main=$("app");
-  main.addEventListener("touchstart",e=>{
-    if(tab!=="cook"||e.touches.length!==1){x0=null;return}
+  const ok=e=>tab==="cook"&&!$("sheet").classList.contains("on")
+    &&!e.target.closest("nav,header,.strip,.dish .acts,button,a,input,select,textarea,label");
+  document.addEventListener("touchstart",e=>{
+    if(e.touches.length!==1||!ok(e)){x0=null;return}
     x0=e.touches[0].clientX; y0=e.touches[0].clientY;
   },{passive:true});
-  main.addEventListener("touchend",e=>{
+  document.addEventListener("touchend",e=>{
     if(x0===null||tab!=="cook")return;
     const t=e.changedTouches[0];
     const dx=t.clientX-x0, dy=t.clientY-y0;
@@ -834,7 +881,7 @@ function shiftCook(n){
 })();
 function renderCook(){
   if(!cookDate)cookDate=key(today);
-  const days=[];for(let i=0;i<7;i++)days.push(addDays(today,i));
+  const days=[];for(let i=0;i<COOK_DAYS;i++)days.push(addDays(today,i));
   const day=S.meals[cookDate]||{};
   const kc=KINDS.reduce((a,x)=>{const d=dishData(day[x.k]);return a+((d&&d.kcal)||0)},0);
   $("app").innerHTML=`
@@ -845,66 +892,112 @@ function renderCook(){
     ${day.label?`<div class="card" style="padding:9px 12px;font-size:14px">${esc(day.label)}</div>`:""}
     ${KINDS.map(x=>dishCard(cookDate,x.k,day[x.k])).join("")}
     ${kc?`<div class="note" style="text-align:center">1人ぶん 合計 約${kc}kcal</div>`:""}`;
+  const on=$("app").querySelector(".strip button.on");
+  if(on) on.scrollIntoView({block:"nearest",inline:"center"});
 }
 
 /* ---------- 買い物タブ ---------- */
 function renderBuy(){
-  const byCat={};CATS.forEach(c=>byCat[c]=[]);
-  for(let i=0;i<7;i++){
+  const L=S.shopping&&S.shopping.list;
+  if(!L){ renderBuyStart(); return; }
+  const items=Object.entries(L.items||{});
+  const total=items.length, done=items.filter(([,x])=>x.done).length;
+  const byCat={}; CATS.forEach(c=>byCat[c]=[]);
+  items.forEach(([id,x])=>{const c=CATS.includes(x.cat)?x.cat:"その他";byCat[c].push([id,x])});
+  let html="";
+  CATS.forEach(c=>{
+    if(!byCat[c].length)return;
+    html+=`<div class="catHead">${c}</div><div class="card" style="padding:4px 13px">`;
+    byCat[c].forEach(([id,x])=>{
+      html+=`<div class="item ${x.done?"checked":""}">
+        <button class="tick ${x.done?"on":""}" onclick="tickItem('${id}')">${x.done?"✓":""}</button>
+        <div class="grow"><div class="t">${esc(x.n)}</div>
+          ${x.src?`<div class="s">${esc(x.src)}</div>`:""}</div>
+        <div class="amt">${esc(x.amt||"")}</div>
+        ${x.manual?`<button class="del" onclick="save(['shopping','list','items','${id}'],null)">削除</button>`:""}
+      </div>`;
+    });
+    html+=`</div>`;
+  });
+  const span=`${L.from.slice(5).replace("-","/")}〜${L.to.slice(5).replace("-","/")}`;
+  $("app").innerHTML=`
+    <div class="card" style="padding:11px 13px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div><b style="font-size:15px">残り ${total-done} ／ ${total}</b>
+          <div class="note">${span} の献立ぶん</div></div>
+        <div style="display:flex;gap:6px">
+          <button class="mini line" onclick="shareBuy()">共有</button>
+          <button class="mini line" onclick="finishList()">買い物おわり</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="display:flex;gap:8px;padding:10px">
+      <input class="field" id="buyIn" placeholder="牛乳" onkeydown="if(event.key==='Enter')addBuy()">
+      <button class="btn" onclick="addBuy()">追加</button></div>
+    ${total?html:`<div class="empty">このリストは空です。<br>上の欄から手で追加できます。</div>`}
+    <button class="btn wide quiet" style="margin-top:12px" onclick="startList()">リストを作り直す</button>`;
+}
+function renderBuyStart(){
+  const n=(S.shopping&&S.shopping.days)||7;
+  $("app").innerHTML=`
+    <div class="empty" style="border:none;padding:10px 0 18px">
+      買い物に行くときに、その回のリストを作ります。<br>
+      作ったあとに献立を変えても、リストは変わりません。
+    </div>
+    <div class="card">
+      <div class="lbl">何日ぶん買う？</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${[2,3,4,5,7,10,14].map(d=>`<button class="mini ${d===n?"gold":"line"}"
+          onclick="save(['shopping','days'],${d})">${d}日</button>`).join("")}
+      </div>
+      <div class="note" style="margin-top:10px">今日から${n}日ぶんの献立から、まだ作っていない料理の材料を集めます。</div>
+      <button class="btn wide" style="margin-top:12px" onclick="startList()">この期間でリストを作る</button>
+    </div>`;
+}
+function startList(){
+  const n=(S.shopping&&S.shopping.days)||7;
+  const items={};
+  for(let i=0;i<n;i++){
     const d=addDays(today,i), k=key(d), day=S.meals[k]; if(!day)continue;
     KINDS.forEach(x=>{const dd=dishData(day[x.k]);
       if(!dd||dd.done||!dd.ing)return;
       dd.ing.forEach(ing=>{
         const cat=CATS.includes(ing.cat)?ing.cat:"その他";
-        const hit=byCat[cat].find(z=>z.n===ing.n);
+        const hit=Object.values(items).find(z=>z.n===ing.n&&z.cat===cat);
         const when=`${d.getMonth()+1}/${d.getDate()} ${dd.name}`;
-        if(hit){if(ing.amt)hit.amts.push(ing.amt);hit.from.push(when)}
-        else byCat[cat].push({n:ing.n,amts:ing.amt?[ing.amt]:[],from:[when],k:"a:"+cat+":"+ing.n});
+        if(hit){ if(ing.amt)hit.amts.push(ing.amt); hit.srcs.push(when); }
+        else items[uid()]={n:ing.n,cat,amts:ing.amt?[ing.amt]:[],srcs:[when],done:false};
       });
     });
   }
-  const manual=Object.entries(S.shopping.manual||{});
-  let total=0,done=0,html="";
-  CATS.forEach(c=>{
-    if(!byCat[c].length)return;
-    html+=`<div class="catHead">${c}</div><div class="card" style="padding:4px 13px">`;
-    byCat[c].forEach(r=>{const on=!!S.shopping.checked[r.k];total++;if(on)done++;
-      html+=`<div class="item ${on?"checked":""}">
-        <button class="tick ${on?"on":""}" onclick="tickBuy('${esc(r.k)}')">${on?"✓":""}</button>
-        <div class="grow"><div class="t">${esc(r.n)}</div><div class="s">${esc(r.from.join("・"))}</div></div>
-        <div class="amt">${esc(r.amts.join(" + "))}</div></div>`});
-    html+=`</div>`;
+  const clean={};
+  Object.entries(items).forEach(([id,x])=>{
+    clean[id]={n:x.n,cat:x.cat,amt:x.amts.join(" + "),src:x.srcs.join("・"),done:false};
   });
-  if(manual.length){
-    html+=`<div class="catHead">手で追加</div><div class="card" style="padding:4px 13px">`;
-    manual.forEach(([id,n])=>{const k="m:"+id,on=!!S.shopping.checked[k];total++;if(on)done++;
-      html+=`<div class="item ${on?"checked":""}">
-        <button class="tick ${on?"on":""}" onclick="tickBuy('${k}')">${on?"✓":""}</button>
-        <div class="grow"><div class="t">${esc(n)}</div></div>
-        <button class="del" onclick="save(['shopping','manual','${id}'],null)">削除</button></div>`});
-    html+=`</div>`;
-  }
-  $("app").innerHTML=`
-    <div class="card" style="display:flex;gap:8px;padding:10px">
-      <input class="field" id="buyIn" placeholder="牛乳" onkeydown="if(event.key==='Enter')addBuy()">
-      <button class="btn" onclick="addBuy()">追加</button></div>
-    ${total?`<div class="note" style="display:flex;justify-content:space-between;align-items:center">
-        <span>残り ${total-done} ／ ${total}</span>
-        <span><button class="mini line" onclick="shareBuy()">共有する</button>
-        <button class="mini line" onclick="clearTicks()">チェックを外す</button></span></div>${html}`
-      :`<div class="empty">献立をたてると、材料がここに分類されて並びます。<br>写真を撮って「作った」になった料理は消えます。</div>`}`;
+  save(["shopping","list"],{from:key(today),to:key(addDays(today,n-1)),at:Date.now(),items:clean});
+  toast(Object.keys(clean).length?`${Object.keys(clean).length}品のリストを作りました`:"対象の材料がありませんでした");
 }
-function addBuy(){const v=$("buyIn").value.trim();if(!v)return;save(["shopping","manual",uid()],v)}
-function tickBuy(k){save(["shopping","checked",k],S.shopping.checked[k]?null:true)}
-function clearTicks(){save(["shopping","checked"],null)}
+function finishList(){
+  if(!confirm("この買い物リストを閉じますか？\n（チェックの状態は消えます）"))return;
+  save(["shopping","list"],null); toast("おつかれさま");
+}
+function addBuy(){
+  const v=$("buyIn").value.trim(); if(!v)return;
+  if(!(S.shopping&&S.shopping.list)){toast("先にリストを作ってください");return}
+  save(["shopping","list","items",uid()],{n:v,cat:"その他",amt:"",done:false,manual:true});
+}
+function tickItem(id){
+  const x=(((S.shopping||{}).list||{}).items||{})[id]; if(!x)return;
+  save(["shopping","list","items",id],Object.assign({},x,{done:!x.done}));
+}
 function shareBuy(){
+  const L=S.shopping&&S.shopping.list; if(!L)return;
+  const byCat={};
+  Object.values(L.items||{}).forEach(x=>{ if(x.done)return;
+    const c=CATS.includes(x.cat)?x.cat:"その他"; (byCat[c]=byCat[c]||[]).push(x)});
   const lines=[];
-  document.querySelectorAll(".catHead").forEach(h=>{
-    const box=h.nextElementSibling,items=[];
-    box.querySelectorAll(".item:not(.checked)").forEach(it=>{
-      const n=it.querySelector(".t").textContent,a=it.querySelector(".amt");
-      items.push("・"+n+(a&&a.textContent?" "+a.textContent:""))});
-    if(items.length)lines.push("【"+h.textContent+"】",...items)});
+  CATS.forEach(c=>{ if(!byCat[c])return;
+    lines.push("【"+c+"】", ...byCat[c].map(x=>"・"+x.n+(x.amt?" "+x.amt:"")))});
   const txt=lines.join("\n")||"買うものはありません";
   if(navigator.share)navigator.share({text:txt}).catch(()=>{});
   else if(navigator.clipboard)navigator.clipboard.writeText(txt).then(()=>toast("コピーしました"));
@@ -913,10 +1006,15 @@ function shareBuy(){
 
 /* ---------- レシピ帳タブ ---------- */
 function bookList(){
-  return Object.entries(S.recipes).map(([id,r])=>{
+  const arr=Object.entries(S.recipes).map(([id,r])=>{
     const ph=r.photos?Object.values(r.photos).sort((a,b)=>(a.date<b.date?1:-1)):[];
-    return {id,name:r.name,time:r.time,cooked:r.cooked||ph.length,photo:coverOf(r),at:r.at||0};
-  }).sort((a,b)=>b.at-a.at);
+    return {id,name:r.name,time:r.time,cooked:r.cooked||ph.length,photo:coverOf(r),
+            at:r.at||0, last:ph[0]?ph[0].date:""};
+  });
+  if(bookSort==="name") arr.sort((a,b)=>a.name.localeCompare(b.name,"ja"));
+  else if(bookSort==="last") arr.sort((a,b)=>(b.last||"").localeCompare(a.last||"")||b.at-a.at);
+  else arr.sort((a,b)=>b.at-a.at);
+  return arr;
 }
 function renderBook(){
   const list=bookList();
@@ -930,7 +1028,11 @@ function renderBook(){
     </div>
     ${WORKER_URL?`<button class="btn wide ghost" style="margin-bottom:10px" onclick="openSearch()">人気レシピをさがす</button>`:""}
     ${list.length?`<input class="field" id="bookQ" placeholder="料理名でさがす" value="${esc(bookQ)}"
-        oninput="bookQ=this.value;drawBookGrid()" style="margin-bottom:10px">
+        oninput="bookQ=this.value;drawBookGrid()" style="margin-bottom:8px">
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        ${[["at","追加した順"],["last","最近作った順"],["name","名前順"]].map(([v,n])=>
+          `<button class="mini ${bookSort===v?"gold":"line"}" onclick="bookSort='${v}';render()">${n}</button>`).join("")}
+      </div>
       <div id="bookGrid"></div>
       <div class="note" style="text-align:center;margin-top:16px">
         <a href="https://recipe.rakuten.co.jp/" target="_blank" rel="noopener">Supported by 楽天レシピ</a></div>`
@@ -994,7 +1096,9 @@ function editBook(id){
         <button onclick="setCover('${id}','${pid}')" style="position:absolute;top:3px;left:3px;
           width:26px;height:26px;border-radius:50%;font-size:14px;line-height:26px;text-align:center;
           background:${pid===coverId?"var(--yuzu)":"rgba(255,255,255,.85)"};color:${pid===coverId?"#fff":"#B4B2AA"}">★</button>
-        <figcaption>${esc(p.date.slice(5).replace("-","/"))}</figcaption></figure>`).join("")}</div>`
+        <input type="date" value="${esc(p.date)}" onchange="setPhotoDate('${id}','${pid}',this.value)"
+          style="width:96px;margin-top:3px;font-size:11px;padding:3px;border:1px solid var(--line);border-radius:6px">
+        </figure>`).join("")}</div>`
       :`<div class="note" style="margin-bottom:6px">まだ写真がありません</div>`}
     <label class="btn wide quiet" style="margin-bottom:12px">写真を追加する
       <input type="file" accept="image/*" style="display:none" onchange="addBookPhoto(event,'${id}')"></label>
@@ -1011,6 +1115,12 @@ function editBook(id){
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" value="${esc(r.url||"")}">
     <button class="btn wide" style="margin-top:14px" onclick="saveBook('${id}')">保存</button>`;
   $("sheet").classList.add("on"); sheetTop();
+}
+function setPhotoDate(id,pid,v){
+  if(!v)return;
+  const r=JSON.parse(JSON.stringify(S.recipes[id]));
+  if(r.photos&&r.photos[pid]) r.photos[pid].date=v;
+  saveQuiet(["recipes",id],r); render(); editBook(id); toast("日付を変えました");
 }
 function setCover(id,pid){
   const r=JSON.parse(JSON.stringify(S.recipes[id])); r.cover=pid;
