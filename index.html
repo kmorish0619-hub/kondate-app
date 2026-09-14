@@ -67,10 +67,13 @@ textarea.field{min-height:72px;resize:vertical;line-height:1.55}
 .btn.quiet{background:#EFEDE6;color:var(--sumi)}
 .btn.wide{display:block;width:100%;text-align:center}
 .btn:disabled{opacity:.45}
-.mini{font-size:12.5px;padding:0 13px;min-height:38px;border-radius:9px;background:#EFEDE6;
+.mini{font-size:13.5px;padding:0 16px;min-height:44px;border-radius:10px;background:#EFEDE6;
   display:inline-flex;align-items:center;justify-content:center}
 .mini.line{background:#fff;border:1px solid var(--line)}
 .mini.gold{background:var(--yuzu);color:#16324F;font-weight:600}
+.seeRecipe{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  background:var(--ink);color:#fff;padding:12px 14px;font-size:14px;font-weight:600;width:100%}
+.seeRecipe .sub{font-size:11px;color:#B9CBDB;font-weight:400}
 h2.sec{font-family:var(--mincho);font-size:16px;font-weight:400;margin:20px 0 9px}
 h2.sec:first-child{margin-top:2px}
 .empty{color:var(--grey);font-size:13px;text-align:center;padding:26px 12px;border:1px dashed var(--line);border-radius:12px}
@@ -448,12 +451,14 @@ function dishCard(k,kk,raw){
       <div class="pic">${d.photo?`<img src="${d.photo}" alt="${esc(d.name)}">`:"写真はまだ"}
         <span class="kind ${kk}">${kindNm(kk)}</span>
         ${d.recipeId?`<span class="bookmark">帳面</span>`:""}</div>
-      <div class="body" style="padding-bottom:4px">
+      <div class="body" style="padding-bottom:8px">
         <div class="nm">${esc(d.name)}</div>
-        <div class="meta">${esc(meta||"　")}　<span style="color:var(--ink)">レシピを見る ›</span></div>
+        <div class="meta">${esc(meta||"　")}</div>
       </div>
     </button>
-    <div class="body" style="padding-top:6px">
+    <button class="seeRecipe" onclick="openRecipe('${k}','${kk}')">
+      <span>材料とつくり方を見る<span class="sub">　タップで開く</span></span><span>›</span></button>
+    <div class="body" style="padding-top:10px">
       <div class="acts">
         ${d.recipeId?"":`<button class="mini gold" onclick="registerRecipe('${k}','${kk}')">帳面に入れる</button>`}
         ${WORKER_URL?`<button class="mini line" onclick="swapDish('${k}','${kk}')">変更する</button>`:""}
@@ -490,6 +495,7 @@ function addDish(k,kk){
     ${WORKER_URL?`<button class="btn wide" style="margin-bottom:8px" onclick="swapDish('${k}','${kk}',true)">AIに提案してもらう</button>`:""}
     <button class="btn wide ghost" style="margin-bottom:8px" onclick="pickFromBook('${k}','${kk}')">レシピ帳からえらぶ</button>
     <button class="btn wide quiet" onclick="editDish('${k}','${kk}',true)">自分で入力する</button>`;
+  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
 }
 async function swapDish(k,kk,isNew){
   const day=S.meals[k]||{}, cur=dishData(day[kk]);
@@ -519,6 +525,7 @@ function pickFromBook(k,kk){
       <div class="s">${r.cooked?`${r.cooked}回つくった`:"まだ作っていない"}${r.time?`・${r.time}分`:""}</div></div>
       <button class="mini" onclick="putDish('${k}','${kk}',{recipeId:'${r.id}'});toast('入れました')">えらぶ</button>
       </div>`).join("")}</div>`;
+  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
 }
 
 /* ---------- レシピ詳細・編集 ---------- */
@@ -549,6 +556,7 @@ function openRecipe(k,kk){
     ${d.recipeId?`<div class="note" style="margin-top:8px;text-align:center">編集するとレシピ帳が更新され、次に同じ料理が出たときも反映されます</div>`
       :`<div class="note" style="margin-top:8px;text-align:center">編集すると自動でレシピ帳に登録されます</div>`}`;
   $("sheetBody").dataset.day="";
+  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
 }
 async function makeSteps(k,kk){
   const raw=(S.meals[k]||{})[kk], d=dishData(raw);
@@ -585,7 +593,7 @@ function editDish(k,kk,isNew){
     <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(d.tips||"")}">
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" inputmode="url" value="${esc(d.url||"")}" placeholder="https://...">
     <button class="btn wide" style="margin-top:14px" onclick="saveDish('${k}','${kk}')">保存してレシピ帳に反映</button>`;
-  $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
 }
 function saveDish(k,kk){
   const name=$("eN").value.trim(); if(!name){toast("料理名を入れてください");return}
@@ -641,7 +649,10 @@ function pickPhoto(ev,k,kk){
       r.photos=r.photos||{};
       const pid=uid(); r.photos[pid]={img:data,date:k};
       const ids=Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1));
-      if(ids.length>PHOTO_KEEP) ids.slice(PHOTO_KEEP).forEach(([i])=>delete r.photos[i]);
+      if(ids.length>PHOTO_KEEP){
+        const drop=ids.filter(([i])=>i!==r.cover).slice(PHOTO_KEEP-(r.cover?1:0));
+        drop.forEach(([i])=>delete r.photos[i]);
+      }
       r.cooked=(r.cooked||0)+((raw.done)?0:1);
       saveQuiet(["recipes",raw.recipeId],r);
       save(["meals",k,kk],Object.assign({},raw,{photoId:pid,done:true}));
@@ -737,7 +748,7 @@ function shareBuy(){
 function bookList(){
   return Object.entries(S.recipes).map(([id,r])=>{
     const ph=r.photos?Object.values(r.photos).sort((a,b)=>(a.date<b.date?1:-1)):[];
-    return {id,name:r.name,time:r.time,cooked:r.cooked||ph.length,photo:ph[0]?ph[0].img:null,at:r.at||0};
+    return {id,name:r.name,time:r.time,cooked:r.cooked||ph.length,photo:coverOf(r),at:r.at||0};
   }).sort((a,b)=>b.at-a.at);
 }
 function renderBook(){
@@ -774,7 +785,8 @@ function openBook(id){
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>${esc(r.name)}</h3>
       <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
-    ${ph.length?`<div class="photoStrip">${ph.map(([i,p])=>`<figure><img src="${p.img}" alt="">
+    ${ph.length?`<div class="photoStrip">${ph.map(([i,p])=>`<figure><img src="${p.img}" alt=""
+        style="${i===(r.cover&&r.photos[r.cover]?r.cover:(ph[0]?ph[0][0]:null))?"outline:3px solid var(--yuzu);outline-offset:-3px":""}">
         <figcaption>${esc(p.date.slice(5).replace("-","/"))}</figcaption></figure>`).join("")}</div>`:""}
     <div class="note">${esc(meta||"まだ作っていません")}</div>
     ${(r.ing||[]).length?`<h2 class="sec">材料（${servings()}）</h2><div class="card">${r.ing.map(x=>`<div class="item">
@@ -788,18 +800,28 @@ function openBook(id){
     <button class="btn wide quiet" style="margin-top:8px;color:var(--danger)" onclick="delBook('${id}')">レシピ帳から削除</button>`;
   $("sheet").classList.add("on"); $("sheetBody").dataset.day="";
 }
+function coverOf(r){
+  if(!r.photos) return null;
+  if(r.cover&&r.photos[r.cover]) return r.photos[r.cover].img;
+  const ph=Object.values(r.photos).sort((a,b)=>(a.date<b.date?1:-1));
+  return ph[0]?ph[0].img:null;
+}
 function editBook(id){
   const r=S.recipes[id];
   const ph=r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
+  const coverId=(r.cover&&r.photos&&r.photos[r.cover])?r.cover:(ph[0]?ph[0][0]:null);
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>レシピを編集</h3>
       <button class="btn quiet" onclick="openBook('${id}')">戻る</button></div>
-    <div class="lbl">写真（${ph.length}／${PHOTO_KEEP}枚）</div>
+    <div class="lbl">写真（${ph.length}／${PHOTO_KEEP}枚）　★が一覧に出る代表写真</div>
     ${ph.length?`<div class="photoStrip">${ph.map(([pid,p])=>`<figure style="position:relative">
-        <img src="${p.img}" alt="">
+        <img src="${p.img}" alt="" style="${pid===coverId?"outline:3px solid var(--yuzu);outline-offset:-3px":""}">
         <button onclick="delBookPhoto('${id}','${pid}')" style="position:absolute;top:3px;right:3px;
-          width:24px;height:24px;border-radius:50%;background:rgba(22,50,79,.85);color:#fff;font-size:14px;
-          line-height:24px;text-align:center">×</button>
+          width:26px;height:26px;border-radius:50%;background:rgba(22,50,79,.85);color:#fff;font-size:15px;
+          line-height:26px;text-align:center">×</button>
+        <button onclick="setCover('${id}','${pid}')" style="position:absolute;top:3px;left:3px;
+          width:26px;height:26px;border-radius:50%;font-size:14px;line-height:26px;text-align:center;
+          background:${pid===coverId?"var(--yuzu)":"rgba(255,255,255,.85)"};color:${pid===coverId?"#fff":"#B4B2AA"}">★</button>
         <figcaption>${esc(p.date.slice(5).replace("-","/"))}</figcaption></figure>`).join("")}</div>`
       :`<div class="note" style="margin-bottom:6px">まだ写真がありません</div>`}
     <label class="btn wide quiet" style="margin-bottom:12px">写真を追加する
@@ -816,8 +838,14 @@ function editBook(id){
     <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(r.tips||"")}">
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" value="${esc(r.url||"")}">
     <button class="btn wide" style="margin-top:14px" onclick="saveBook('${id}')">保存</button>`;
-  $("sheetBody").scrollTop=0;
+  $("sheet").classList.add("on"); $("sheetBody").scrollTop=0;
 }
+function setCover(id,pid){
+  const r=JSON.parse(JSON.stringify(S.recipes[id])); r.cover=pid;
+  saveQuiet(["recipes",id],r); render(); editBook(id); toast("代表写真にしました");
+}
+/* 写真がいっぱいのときは、どれを消すか選んでもらう */
+let pendingPhoto=null;
 function addBookPhoto(ev,id){
   const f=ev.target.files&&ev.target.files[0]; if(!f)return;
   toast("写真を縮めています…");
@@ -827,19 +855,49 @@ function addBookPhoto(ev,id){
     w=Math.round(w*sc); h=Math.round(h*sc);
     const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
     cv.getContext("2d").drawImage(img,0,0,w,h);
-    const r=JSON.parse(JSON.stringify(S.recipes[id]));
-    r.photos=r.photos||{};
-    r.photos[uid()]={img:cv.toDataURL("image/jpeg",PHOTO_Q),date:key(today)};
-    const ids=Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1));
-    if(ids.length>PHOTO_KEEP) ids.slice(PHOTO_KEEP).forEach(([i])=>delete r.photos[i]);
-    saveQuiet(["recipes",id],r); render(); editBook(id); toast("写真を追加しました");
+    const data=cv.toDataURL("image/jpeg",PHOTO_Q);
+    const r=S.recipes[id];
+    const n=r.photos?Object.keys(r.photos).length:0;
+    if(n>=PHOTO_KEEP){ pendingPhoto={id,data}; askWhichToDrop(id,data); return; }
+    commitPhoto(id,data,null); editBook(id); toast("写真を追加しました");
   };img.src=rd.result};
   rd.readAsDataURL(f);
+}
+function commitPhoto(id,data,dropId){
+  const r=JSON.parse(JSON.stringify(S.recipes[id]));
+  r.photos=r.photos||{};
+  if(dropId){ delete r.photos[dropId]; if(r.cover===dropId) delete r.cover; }
+  r.photos[uid()]={img:data,date:key(today)};
+  saveQuiet(["recipes",id],r); render();
+}
+function askWhichToDrop(id,data){
+  const r=S.recipes[id];
+  const ph=Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1));
+  $("sheetBody").innerHTML=`
+    <div class="sheetHead"><h3>写真がいっぱいです</h3>
+      <button class="btn quiet" onclick="pendingPhoto=null;editBook('${id}')">やめる</button></div>
+    <div class="note">${PHOTO_KEEP}枚まで保存できます。どれと入れ替えますか？</div>
+    <div class="photoStrip" style="margin-top:10px">
+      <figure><img src="${data}" alt="" style="outline:3px solid var(--yuzu);outline-offset:-3px">
+        <figcaption>追加する写真</figcaption></figure></div>
+    <h2 class="sec">入れ替えて消す写真をえらぶ</h2>
+    <div class="card">${ph.map(([pid,p])=>`<div class="item" style="align-items:center">
+      <img src="${p.img}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex:none">
+      <div class="grow"><div class="t">${esc(p.date.replace(/-/g,"/"))}${r.cover===pid?"　★代表":""}</div></div>
+      <button class="mini line" style="color:var(--danger)" onclick="dropAndAdd('${id}','${pid}')">これを消す</button>
+      </div>`).join("")}</div>`;
+  $("sheetBody").scrollTop=0;
+}
+function dropAndAdd(id,pid){
+  if(!pendingPhoto)return;
+  commitPhoto(id,pendingPhoto.data,pid); pendingPhoto=null;
+  editBook(id); toast("入れ替えました");
 }
 function delBookPhoto(id,pid){
   if(!confirm("この写真を削除しますか？"))return;
   const r=JSON.parse(JSON.stringify(S.recipes[id]));
   if(r.photos) delete r.photos[pid];
+  if(r.cover===pid) delete r.cover;
   if(r.photos&&!Object.keys(r.photos).length) delete r.photos;
   saveQuiet(["recipes",id],r); render(); editBook(id); toast("削除しました");
 }
