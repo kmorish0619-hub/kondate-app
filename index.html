@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#16324F">
@@ -105,7 +105,8 @@ h2.sec:first-child{margin-top:2px}
 .slotAdd{border:1px dashed var(--line);border-radius:12px;padding:14px;text-align:center;color:var(--grey);
   font-size:13px;margin-bottom:10px;background:#FDFCFA}
 
-.strip{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch}
+.strip{display:flex;gap:6px;overflow-x:auto;padding:8px 0;margin:-8px 0 0;
+  position:sticky;top:var(--hh,56px);z-index:15;background:var(--paper)}
 .strip button{flex:none;min-width:52px;padding:7px 4px;border-radius:9px;background:#EFEDE6;text-align:center;line-height:1.25}
 .strip button .d{font-family:var(--mincho);font-size:15px}
 .strip button .w{font-size:10px;color:var(--grey)}
@@ -194,7 +195,7 @@ ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-r
 <header class="hidden" id="hd">
   <div class="row">
     <button class="navbtn" id="prevBtn" onclick="moveMonth(-1)">‹</button>
-    <div style="flex:1"><h1 id="hTitle">献立帳</h1><div id="hSub"></div></div>
+    <button style="flex:1;display:block" onclick="titleTap()"><h1 id="hTitle">献立帳</h1><div id="hSub"></div></button>
     <button class="navbtn" id="nextBtn" onclick="moveMonth(1)">›</button>
   </div>
 </header>
@@ -331,13 +332,35 @@ function registerRecipe(k,kk){
 /* ---------- 画面切替 ---------- */
 function setTab(t){tab=t;picking=false;picked={};closeSheet();render();window.scrollTo(0,0)}
 function moveMonth(d){const n=new Date(view.y,view.m+d,1);view={y:n.getFullYear(),m:n.getMonth()};render()}
+function titleTap(){ if(tab==="plan") openMonthPicker(); }
+function backToday(){
+  view={y:today.getFullYear(),m:today.getMonth()}; selDate=key(today); closeSheet(); render();
+}
+function openMonthPicker(){
+  const y=view.y;
+  $("sheetBody").innerHTML=`
+    <div class="sheetHead"><h3>いつの月を見る？</h3>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <button class="mini line" onclick="view.y=${y-1};openMonthPicker()">‹ ${y-1}年</button>
+      <b style="font-family:var(--mincho);font-size:20px">${y}年</b>
+      <button class="mini line" onclick="view.y=${y+1};openMonthPicker()">${y+1}年 ›</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+      ${Array.from({length:12},(_,i)=>`<button class="btn ${(y===view.y&&i===view.m)?"":"quiet"}"
+        style="padding:14px 0" onclick="view={y:${y},m:${i}};closeSheet();render()">${i+1}月</button>`).join("")}
+    </div>
+    <button class="btn wide ghost" style="margin-top:14px" onclick="backToday()">今日にもどる</button>`;
+  $("sheet").classList.add("on"); sheetTop();
+}
 function render(){
+  document.documentElement.style.setProperty("--hh",$("hd").offsetHeight+"px");
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
   const mon=tab==="plan";
   $("prevBtn").style.visibility=mon?"visible":"hidden";
   $("nextBtn").style.visibility=mon?"visible":"hidden";
   $("pickBar").classList.toggle("hidden",!picking);
-  if(tab==="plan"){$("hTitle").textContent=`${view.y}年 ${view.m+1}月`;
+  if(tab==="plan"){$("hTitle").textContent=`${view.y}年 ${view.m+1}月 ▾`;
     $("hSub").textContent=picking?"献立をたてる日をえらぶ":`${countMonth()}品ぶん`;renderPlan()}
   if(tab==="cook"){$("hTitle").textContent="料理をする";$("hSub").textContent=servings();renderCook()}
   if(tab==="buy"){$("hTitle").textContent="買い物リスト";
@@ -366,8 +389,11 @@ function renderPlan(){
       <div style="flex:1;font-size:13px">AIが${lastFill.n}品たてました${lastFill.reused?`（うち${lastFill.reused}品は帳面から）`:""}</div>
       <button class="mini" onclick="undoFill()">取り消す</button>
       <button class="mini" onclick="lastFill=null;render()">閉じる</button></div>`:"";
+  const away=(view.y!==today.getFullYear()||view.m!==today.getMonth());
   $("app").innerHTML=`
     ${!picking&&WORKER_URL?`<button class="btn wide" style="margin-bottom:10px" onclick="startPick()">日にちをえらんで献立をたてる</button>`:""}
+    ${(!picking&&away)?`<div style="text-align:center;margin-bottom:8px">
+      <button class="mini gold" onclick="backToday()">今日にもどる</button></div>`:""}
     ${picking?`<div class="note" style="margin-bottom:9px">必要な日数だけタップ。えらんだ日の空いている枠だけ埋まります。</div>`:""}
     ${bar}
     <div class="week">${WD.map((w,i)=>`<div class="${i===0?"sun":i===6?"sat":""}">${w}</div>`).join("")}</div>
@@ -865,7 +891,7 @@ function shiftCook(n){
 (function(){
   let x0=null,y0=null;
   const ok=e=>tab==="cook"&&!$("sheet").classList.contains("on")
-    &&!e.target.closest("nav,header,.strip,.dish .acts,button,a,input,select,textarea,label");
+    &&!e.target.closest("nav,.strip,input,select,textarea");
   document.addEventListener("touchstart",e=>{
     if(e.touches.length!==1||!ok(e)){x0=null;return}
     x0=e.touches[0].clientX; y0=e.touches[0].clientY;
