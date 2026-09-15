@@ -244,7 +244,8 @@ function tidyAll(){
   .pPhoto{width:46mm;height:33mm;object-fit:cover;border-radius:2mm;flex:none}
   .pSec{font-family:var(--mincho);font-size:12pt;color:#16324F;margin:4mm 0 1.5mm;
     border-left:2mm solid #D8A62E;padding-left:2.5mm}
-  .pIngWrap.two{column-count:2;column-gap:7mm}
+  .pIngCols{display:flex;gap:7mm;align-items:flex-start}
+  .pIngCols table{flex:1;min-width:0}
   .pIng{width:100%;border-collapse:collapse;font-size:10pt}
   .pIng td{padding:1mm 0;border-bottom:1px dotted #bbb;vertical-align:bottom}
   .pIng td.a{text-align:right;white-space:nowrap;padding-left:4mm}
@@ -252,7 +253,7 @@ function tidyAll(){
   .pStep b{flex:none;width:5.5mm;height:5.5mm;border-radius:50%;background:#16324F;color:#fff;
     font-size:7.5pt;text-align:center;line-height:5.5mm;font-weight:400}
   .pTip{background:#F7F3E8;padding:2.5mm 3.5mm;font-size:9.5pt;line-height:1.6;border-radius:2mm}
-  .pFoot{margin-top:5mm;padding-top:2mm;border-top:1px solid #ddd;font-size:7.5pt;color:#888;
+  .pFoot{margin-top:3.5mm;padding-top:1.5mm;border-top:1px solid #ddd;font-size:7.5pt;color:#888;
     display:flex;justify-content:space-between}
   .pCover{text-align:center;padding-top:60mm}
   .pCover h1{font-family:var(--mincho);font-size:34pt;font-weight:400;letter-spacing:.3em;color:#16324F}
@@ -1082,8 +1083,17 @@ function tidyAll(){
 /* ---------- 印刷・PDF ---------- */
 function pRecipe(r,n,total){
   const list=r.ing||[];
-  const two=list.length>8;   // 材料が多いときは2段に分けて、1ページに収める
-  const ing=list.map(x=>`<tr><td>${esc(x.n)}</td><td class="a">${esc(x.amt||"")}</td></tr>`).join("");
+  const row=x=>`<tr><td>${esc(x.n)}</td><td class="a">${esc(x.amt||"")}</td></tr>`;
+  // 材料が多いときは表を2つに割って横に並べる（1ページに収めるため）
+  let ing="";
+  if(list.length>8){
+    const half=Math.ceil(list.length/2);
+    ing=`<div class="pIngCols">
+      <table class="pIng">${list.slice(0,half).map(row).join("")}</table>
+      <table class="pIng">${list.slice(half).map(row).join("")}</table></div>`;
+  }else if(list.length){
+    ing=`<table class="pIng">${list.map(row).join("")}</table>`;
+  }
   const steps=(r.steps||[]).map((t,i)=>`<div class="pStep"><b>${i+1}</b><span>${esc(t)}</span></div>`).join("");
   const photo=coverOf(r);
   const meta=[r.time?`調理時間 約${r.time}分`:"",servings(),r.cooked?`${r.cooked}回つくりました`:""].filter(Boolean).join("　／　");
@@ -1092,8 +1102,7 @@ function pRecipe(r,n,total){
     <div class="pHead">
       <div class="info">
         <div class="pMeta">${esc(meta)}</div>
-        ${ing?`<div class="pSec" style="margin-top:0">材料</div>
-          <div class="pIngWrap ${two?"two":""}"><table class="pIng">${ing}</table></div>`:""}
+        ${ing?`<div class="pSec" style="margin-top:0">材料</div>${ing}`:""}
       </div>
       ${photo?`<img class="pPhoto" src="${photo}" alt="">`:""}
     </div>
