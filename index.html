@@ -69,7 +69,10 @@ main{padding:14px 16px 20px;max-width:640px;margin:0 auto;min-height:70vh}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:10px}
 .lbl{font-size:12px;color:var(--grey);margin-bottom:5px}
 .field{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fff}
-textarea.field{min-height:72px;resize:vertical;line-height:1.55}
+textarea.field{min-height:72px;resize:vertical;line-height:1.7}
+textarea.field.mid{min-height:110px}
+textarea.field.tall{min-height:200px}
+textarea.field.taller{min-height:260px}
 .btn{background:var(--ink);color:#fff;padding:11px 18px;border-radius:9px;font-weight:600;font-size:14px}
 .btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--ink)}
 .btn.quiet{background:#EFEDE6;color:var(--sumi)}
@@ -247,7 +250,6 @@ const PHOTO_KEEP = 6;   // レシピ1つあたりに残す写真の枚数
 /* ============================================================ */
 
 const KINDS=[{k:"main",nm:"主菜"},{k:"side",nm:"副菜"}];
-const CATS=["野菜・大豆製品","魚","肉","卵","調味料","その他"];
 const WD=["日","月","火","水","木","金","土"];
 
 let DB=null, S={meals:{}, recipes:{}, shopping:{}, settings:{adults:2,kids:0}};
@@ -318,11 +320,11 @@ function findRecipeByName(name){
 }
 function recipeFields(o){
   return { name:String(o.name||""),
-    ing:(o.ing||[]).map(x=>({n:String(x.n||""),amt:String(x.amt||""),cat:CATS.includes(x.cat)?x.cat:"その他"})).filter(x=>x.n),
+    ing:(o.ing||[]).map(x=>({n:String(x.n||""),amt:String(x.amt||"")})).filter(x=>x.n),
     steps:(o.steps&&o.steps.length)?o.steps.map(String):null,
     tips:o.tips?String(o.tips):null, url:o.url?String(o.url):null,
     image:o.image?String(o.image):null, source:o.source?String(o.source):null,
-    time:Number(o.time)||null, kcal:Number(o.kcal)||null };
+    time:Number(o.time)||null };
 }
 /* 献立の1品を帳面に登録する。写真があればそれを1枚目の履歴にする */
 function registerRecipe(k,kk){
@@ -508,9 +510,9 @@ async function rakutenCats(){
 }
 function rakutenToDish(x){
   return { name:String(x.recipeTitle||"").trim(),
-    ing:(x.recipeMaterial||[]).map(m=>({n:String(m),amt:"",cat:"その他"})).filter(z=>z.n),
+    ing:(x.recipeMaterial||[]).map(m=>({n:String(m),amt:""})).filter(z=>z.n),
     time:parseInt(String(x.recipeIndication||"").replace(/[^0-9]/g,""))||null,
-    kcal:null, steps:null, tips:null,
+    steps:null, tips:null,
     url:x.recipeUrl||null, image:x.foodImageUrl||x.mediumImageUrl||null, source:"rakuten" };
 }
 async function rakutenRanking(categoryId){
@@ -559,8 +561,6 @@ function parseJSON(t){
   throw new Error("提案を読み取れませんでした: "+(peek||"応答が空でした"));
 }
 const CHEF="あなたは日本の家庭料理に詳しい献立プランナーです。平日に無理なく作れる現実的な料理を選びます。";
-const FMT=`各料理の形式: {"name":"料理名","time":15,"kcal":300,"ing":[{"n":"鶏もも肉","amt":"200g","cat":"肉"}]}
-catは ${CATS.join(" / ")} のいずれか。timeは分、kcalは1人ぶんの目安。`;
 
 /* AIの提案を献立に入れる。同じ名前が帳面にあれば、AIの中身は捨てて帳面を使う */
 let RPOOL=[];   // 直近に取得した楽天レシピの候補
@@ -694,7 +694,7 @@ function closeSheet(){$("sheet").classList.remove("on")}
 function dishCard(k,kk,raw){
   const d=dishData(raw);
   if(!d||!d.name) return `<button class="slotAdd" style="width:100%" onclick="addDish('${k}','${kk}')">＋ ${kindNm(kk)}を追加</button>`;
-  const meta=[d.time?`${d.time}分`:"",d.kcal?`${d.kcal}kcal`:"",d.done?"作った":""].filter(Boolean).join("・");
+  const meta=[d.time?`${d.time}分`:"",d.done?"作った":""].filter(Boolean).join("・");
   return `<div class="dish">
     <button class="tapzone" onclick="openRecipe('${k}','${kk}')">
       <div class="pic">${d.photo?`<img src="${d.photo}" alt="${esc(d.name)}">`:"写真はまだ"}
@@ -792,7 +792,7 @@ function pickFromBook(k,kk){
 /* ---------- レシピ詳細・編集 ---------- */
 function openRecipe(k,kk){
   const d=dishData((S.meals[k]||{})[kk]); if(!d)return;
-  const meta=[d.time?`${d.time}分`:"",d.kcal?`${d.kcal}kcal`:""].filter(Boolean).join("　");
+  const meta=d.time?`${d.time}分`:"";
   const r=d.recipeId?S.recipes[d.recipeId]:null;
   const hist=r&&r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
   $("sheetBody").innerHTML=`
@@ -828,14 +828,12 @@ async function makeSteps(k,kk){
 `「${d.name}」を${servings()}ぶん作ります。
 ${hasIng?`材料: ${d.ing.map(x=>`${x.n} ${x.amt}`).join("、")}`:"材料も考えてください。"}
 手順は3〜6ステップ、1文ずつ簡潔に。
-出力はJSONのみ: {${hasIng?"":`"ing":[{"n":"鶏もも肉","amt":"200g","cat":"肉"}],`}"steps":["…"],"tips":"コツを1〜2文","time":15,"kcal":300}
-${hasIng?"":`catは ${CATS.join(" / ")} のいずれか。`}`, CHEF, 1400);
+出力はJSONのみ: {${hasIng?"":`"ing":[{"n":"鶏もも肉","amt":"200g"}],`}"steps":["…"],"tips":"コツを1〜2文","time":15}`, CHEF, 1400);
     const o=parseJSON(txt);
     const upd={steps:(o.steps||[]).map(String), tips:o.tips?String(o.tips):null,
-      time:d.time||Number(o.time)||null, kcal:d.kcal||Number(o.kcal)||null};
+      time:d.time||Number(o.time)||null};
     if(!hasIng&&Array.isArray(o.ing)&&o.ing.length)
-      upd.ing=o.ing.map(x=>({n:String(x.n||""),amt:String(x.amt||""),
-        cat:CATS.includes(x.cat)?x.cat:"その他"})).filter(x=>x.n);
+      upd.ing=o.ing.map(x=>({n:String(x.n||""),amt:String(x.amt||"")})).filter(x=>x.n);
     if(d.recipeId) saveQuiet(["recipes",d.recipeId],Object.assign({},S.recipes[d.recipeId],upd));
     else saveQuiet(["meals",k,kk],Object.assign({},raw,upd));
     openRecipe(k,kk);
@@ -847,16 +845,14 @@ function editDish(k,kk,isNew){
     <div class="sheetHead"><h3>${isNew?kindNm(kk)+"を入力":"アレンジ・編集"}</h3>
       <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     <div class="lbl">料理名</div><input class="field" id="eN" value="${esc(d.name)}" placeholder="肉じゃが">
-    <div class="row2" style="margin-top:10px">
-      <div><div class="lbl">調理時間（分）</div><input class="field" id="eT" type="number" inputmode="numeric" value="${d.time||""}"></div>
-      <div><div class="lbl">kcal（1人）</div><input class="field" id="eK" type="number" inputmode="numeric" value="${d.kcal||""}"></div>
-    </div>
-    <div class="lbl" style="margin-top:12px">材料（1行に「名前, 分量, 分類」）</div>
-    <textarea class="field" id="eI" placeholder="玉ねぎ, 中1/2個, 野菜・大豆製品">${esc((d.ing||[]).map(x=>`${x.n}, ${x.amt}, ${x.cat}`).join("\n"))}</textarea>
-    <div class="note">分類は ${CATS.join(" / ")}。省くと「その他」になります。</div>
+    <div class="lbl" style="margin-top:10px">調理時間（分）</div>
+    <input class="field" id="eT" type="number" inputmode="numeric" value="${d.time||""}" style="width:120px">
+    <div class="lbl" style="margin-top:12px">材料（1行に「名前, 分量」）</div>
+    <textarea class="field tall" id="eI" placeholder="玉ねぎ, 中1/2個">${esc((d.ing||[]).map(x=>`${x.n}, ${x.amt}`).join("\n"))}</textarea>
     <div class="lbl" style="margin-top:12px">つくり方（1行に1ステップ）</div>
-    <textarea class="field" id="eS">${esc((d.steps||[]).join("\n"))}</textarea>
-    <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(d.tips||"")}">
+    <textarea class="field taller" id="eS">${esc((d.steps||[]).join("\n"))}</textarea>
+    <div class="lbl" style="margin-top:12px">コツ</div>
+    <textarea class="field mid" id="eP">${esc(d.tips||"")}</textarea>
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" inputmode="url" value="${esc(d.url||"")}" placeholder="https://...">
     <button class="btn wide" style="margin-top:14px" onclick="saveDish('${k}','${kk}')">保存してレシピ帳に反映</button>`;
   $("sheet").classList.add("on"); sheetTop();
@@ -867,11 +863,11 @@ function saveDish(k,kk){
   const o={ name,
     ing:$("eI").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
       const p=l.split(/[,、]/).map(x=>x.trim());
-      return {n:p[0],amt:p[1]||"",cat:CATS.includes(p[2])?p[2]:"その他"};
+      return {n:p[0],amt:p[1]||""};
     }).filter(x=>x.n),
     steps:$("eS").value.split("\n").map(l=>l.trim()).filter(Boolean),
     tips:$("eP").value.trim(), url:$("eU").value.trim(),
-    time:Number($("eT").value)||null, kcal:Number($("eK").value)||null };
+    time:Number($("eT").value)||null };
   const f=recipeFields(o);
   if(cur.recipeId){
     // 帳面を更新（写真の履歴はそのまま残す）
@@ -966,7 +962,6 @@ function renderCook(){
   const last=new Date(cookView.y,cookView.m+1,0).getDate();
   const days=[];for(let i=1;i<=last;i++)days.push(new Date(cookView.y,cookView.m,i));
   const day=S.meals[cookDate]||{};
-  const kc=KINDS.reduce((a,x)=>{const d=dishData(day[x.k]);return a+((d&&d.kcal)||0)},0);
   const away=(cookView.y!==today.getFullYear()||cookView.m!==today.getMonth());
   $("app").innerHTML=`
     <div class="strip">${days.map(d=>{const k=key(d), has=S.meals[k];
@@ -979,7 +974,6 @@ function renderCook(){
     </div>
     ${day.label?`<div class="card" style="padding:9px 12px;font-size:14px">${esc(day.label)}</div>`:""}
     ${KINDS.map(x=>dishCard(cookDate,x.k,day[x.k])).join("")}
-    ${kc?`<div class="note" style="text-align:center">1人ぶん 合計 約${kc}kcal</div>`:""}
     ${helpLink()}`;
   const on=$("app").querySelector(".strip button.on");
   if(on) on.scrollIntoView({block:"nearest",inline:"center"});
@@ -1006,7 +1000,7 @@ const HELP={
   buy:{t:"買い物タブ",b:[
     ["リストを作る","買い物に行くときに、何日ぶん買うかを選んでリストを作ります。その時点の献立から材料を写し取るので、あとで献立を変えてもリストは崩れません。"],
     ["チェック","買ったものにチェック。このリストの中だけの話なので、翌日に持ち越したり他の日に影響したりしません。"],
-    ["共有","LINEなどに送れます。チェック済みのものは除いて送られます。"],
+    ["並び順と共有","まだ買っていないものが上に来ます。「共有」でLINEなどに送れます（チェック済みは除かれます）。"],
     ["買い物おわり","リストを閉じます。次に行くときにまた作ります。"]
   ]},
   book:{t:"レシピ帳タブ",b:[
@@ -1063,23 +1057,16 @@ function renderBuy(){
   if(!L){ renderBuyStart(); return; }
   const items=Object.entries(L.items||{});
   const total=items.length, done=items.filter(([,x])=>x.done).length;
-  const byCat={}; CATS.forEach(c=>byCat[c]=[]);
-  items.forEach(([id,x])=>{const c=CATS.includes(x.cat)?x.cat:"その他";byCat[c].push([id,x])});
-  let html="";
-  CATS.forEach(c=>{
-    if(!byCat[c].length)return;
-    html+=`<div class="catHead">${c}</div><div class="card" style="padding:4px 13px">`;
-    byCat[c].forEach(([id,x])=>{
-      html+=`<div class="item ${x.done?"checked":""}">
-        <button class="tick ${x.done?"on":""}" onclick="tickItem('${id}')">${x.done?"✓":""}</button>
-        <div class="grow"><div class="t">${esc(x.n)}</div>
-          ${x.src?`<div class="s">${esc(x.src)}</div>`:""}</div>
-        <div class="amt">${esc(x.amt||"")}</div>
-        ${x.manual?`<button class="del" onclick="save(['shopping','list','items','${id}'],null)">削除</button>`:""}
-      </div>`;
-    });
-    html+=`</div>`;
-  });
+  // 未チェックを上、チェック済みを下に
+  const sorted=items.slice().sort((a,b)=>(a[1].done?1:0)-(b[1].done?1:0));
+  const html=sorted.length?`<div class="card" style="padding:4px 13px">${sorted.map(([id,x])=>`
+    <div class="item ${x.done?"checked":""}">
+      <button class="tick ${x.done?"on":""}" onclick="tickItem('${id}')">${x.done?"✓":""}</button>
+      <div class="grow"><div class="t">${esc(x.n)}</div>
+        ${x.src?`<div class="s">${esc(x.src)}</div>`:""}</div>
+      <div class="amt">${esc(x.amt||"")}</div>
+      ${x.manual?`<button class="del" onclick="save(['shopping','list','items','${id}'],null)">削除</button>`:""}
+    </div>`).join("")}</div>`:"";
   const span=`${L.from.slice(5).replace("-","/")}〜${L.to.slice(5).replace("-","/")}`;
   $("app").innerHTML=`
     <div class="card" style="padding:11px 13px">
@@ -1125,17 +1112,16 @@ function startList(){
     KINDS.forEach(x=>{const dd=dishData(day[x.k]);
       if(!dd||dd.done||!dd.ing)return;
       dd.ing.forEach(ing=>{
-        const cat=CATS.includes(ing.cat)?ing.cat:"その他";
-        const hit=Object.values(items).find(z=>z.n===ing.n&&z.cat===cat);
+        const hit=Object.values(items).find(z=>z.n===ing.n);
         const when=`${d.getMonth()+1}/${d.getDate()} ${dd.name}`;
         if(hit){ if(ing.amt)hit.amts.push(ing.amt); hit.srcs.push(when); }
-        else items[uid()]={n:ing.n,cat,amts:ing.amt?[ing.amt]:[],srcs:[when],done:false};
+        else items[uid()]={n:ing.n,amts:ing.amt?[ing.amt]:[],srcs:[when],done:false};
       });
     });
   }
   const clean={};
   Object.entries(items).forEach(([id,x])=>{
-    clean[id]={n:x.n,cat:x.cat,amt:x.amts.join(" + "),src:x.srcs.join("・"),done:false};
+    clean[id]={n:x.n,amt:x.amts.join(" + "),src:x.srcs.join("・"),done:false};
   });
   save(["shopping","list"],{from:key(today),to:key(addDays(today,n-1)),at:Date.now(),items:clean});
   toast(Object.keys(clean).length?`${Object.keys(clean).length}品のリストを作りました`:"対象の材料がありませんでした");
@@ -1147,7 +1133,7 @@ function finishList(){
 function addBuy(){
   const v=$("buyIn").value.trim(); if(!v)return;
   if(!(S.shopping&&S.shopping.list)){toast("先にリストを作ってください");return}
-  save(["shopping","list","items",uid()],{n:v,cat:"その他",amt:"",done:false,manual:true});
+  save(["shopping","list","items",uid()],{n:v,amt:"",done:false,manual:true});
 }
 function tickItem(id){
   const x=(((S.shopping||{}).list||{}).items||{})[id]; if(!x)return;
@@ -1155,12 +1141,8 @@ function tickItem(id){
 }
 function shareBuy(){
   const L=S.shopping&&S.shopping.list; if(!L)return;
-  const byCat={};
-  Object.values(L.items||{}).forEach(x=>{ if(x.done)return;
-    const c=CATS.includes(x.cat)?x.cat:"その他"; (byCat[c]=byCat[c]||[]).push(x)});
-  const lines=[];
-  CATS.forEach(c=>{ if(!byCat[c])return;
-    lines.push("【"+c+"】", ...byCat[c].map(x=>"・"+x.n+(x.amt?" "+x.amt:"")))});
+  const lines=Object.values(L.items||{}).filter(x=>!x.done)
+    .map(x=>"・"+x.n+(x.amt?" "+x.amt:""));
   const txt=lines.join("\n")||"買うものはありません";
   if(navigator.share)navigator.share({text:txt}).catch(()=>{});
   else if(navigator.clipboard)navigator.clipboard.writeText(txt).then(()=>toast("コピーしました"));
@@ -1217,7 +1199,7 @@ function drawBookGrid(){
 function openBook(id){
   const r=S.recipes[id]; if(!r)return;
   const ph=r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
-  const meta=[r.time?`${r.time}分`:"",r.kcal?`${r.kcal}kcal`:"",r.cooked?`${r.cooked}回つくった`:""].filter(Boolean).join("　");
+  const meta=[r.time?`${r.time}分`:"",r.cooked?`${r.cooked}回つくった`:""].filter(Boolean).join("　");
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>${esc(r.name)}</h3>
       <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
@@ -1264,15 +1246,14 @@ function editBook(id){
     <label class="btn wide quiet" style="margin-bottom:12px">写真を追加する
       <input type="file" accept="image/*" style="display:none" onchange="addBookPhoto(event,'${id}')"></label>
     <div class="lbl">料理名</div><input class="field" id="eN" value="${esc(r.name)}">
-    <div class="row2" style="margin-top:10px">
-      <div><div class="lbl">調理時間（分）</div><input class="field" id="eT" type="number" value="${r.time||""}"></div>
-      <div><div class="lbl">kcal（1人）</div><input class="field" id="eK" type="number" value="${r.kcal||""}"></div>
-    </div>
-    <div class="lbl" style="margin-top:12px">材料（1行に「名前, 分量, 分類」）</div>
-    <textarea class="field" id="eI" style="min-height:120px">${esc((r.ing||[]).map(x=>`${x.n}, ${x.amt}, ${x.cat}`).join("\n"))}</textarea>
+    <div class="lbl" style="margin-top:10px">調理時間（分）</div>
+    <input class="field" id="eT" type="number" inputmode="numeric" value="${r.time||""}" style="width:120px">
+    <div class="lbl" style="margin-top:12px">材料（1行に「名前, 分量」）</div>
+    <textarea class="field tall" id="eI" placeholder="玉ねぎ, 中1/2個">${esc((r.ing||[]).map(x=>`${x.n}, ${x.amt}`).join("\n"))}</textarea>
     <div class="lbl" style="margin-top:12px">つくり方（1行に1ステップ）</div>
-    <textarea class="field" id="eS" style="min-height:140px">${esc((r.steps||[]).join("\n"))}</textarea>
-    <div class="lbl" style="margin-top:12px">コツ</div><input class="field" id="eP" value="${esc(r.tips||"")}">
+    <textarea class="field taller" id="eS">${esc((r.steps||[]).join("\n"))}</textarea>
+    <div class="lbl" style="margin-top:12px">コツ</div>
+    <textarea class="field mid" id="eP">${esc(r.tips||"")}</textarea>
     <div class="lbl" style="margin-top:12px">参考URL</div><input class="field" id="eU" type="url" value="${esc(r.url||"")}">
     <button class="btn wide" style="margin-top:14px" onclick="saveBook('${id}')">保存</button>`;
   $("sheet").classList.add("on"); sheetTop();
@@ -1348,10 +1329,10 @@ function saveBook(id){
   const name=$("eN").value.trim(); if(!name){toast("料理名を入れてください");return}
   const f=recipeFields({ name,
     ing:$("eI").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
-      const p=l.split(/[,、]/).map(x=>x.trim());return {n:p[0],amt:p[1]||"",cat:p[2]}}).filter(x=>x.n),
+      const p=l.split(/[,、]/).map(x=>x.trim());return {n:p[0],amt:p[1]||""}}).filter(x=>x.n),
     steps:$("eS").value.split("\n").map(l=>l.trim()).filter(Boolean),
     tips:$("eP").value.trim(), url:$("eU").value.trim(),
-    time:$("eT").value, kcal:$("eK").value });
+    time:$("eT").value });
   save(["recipes",id],Object.assign({},S.recipes[id],f));
   openBook(id); toast("保存しました");
 }
