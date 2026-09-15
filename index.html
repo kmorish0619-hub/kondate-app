@@ -110,6 +110,8 @@ h2.sec:first-child{margin-top:2px}
 .strip button{flex:none;min-width:52px;padding:7px 4px;border-radius:9px;background:#EFEDE6;text-align:center;line-height:1.25}
 .strip button .d{font-family:var(--mincho);font-size:15px}
 .strip button .w{font-size:10px;color:var(--grey)}
+.strip button .pip{width:4px;height:4px;border-radius:50%;background:var(--main);margin:2px auto 0}
+.strip button.on .pip{background:var(--yuzu)}
 .strip button.on{background:var(--ink);color:#fff}
 .strip button.on .w{color:#C3D4E4}
 .photoStrip{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px}
@@ -242,7 +244,6 @@ const FIREBASE_CONFIG = {
 };
 const PHOTO_MAX = 1200, PHOTO_Q = 0.7;
 const PHOTO_KEEP = 6;   // レシピ1つあたりに残す写真の枚数
-const COOK_DAYS  = 60;  // 料理タブで先まで見られる日数
 /* ============================================================ */
 
 const KINDS=[{k:"main",nm:"主菜"},{k:"side",nm:"副菜"}];
@@ -252,6 +253,7 @@ const WD=["日","月","火","水","木","金","土"];
 let DB=null, S={meals:{}, recipes:{}, shopping:{}, settings:{adults:2,kids:0}};
 const today=new Date();
 let view={y:today.getFullYear(),m:today.getMonth()};
+let cookView={y:today.getFullYear(),m:today.getMonth()};
 let tab="plan", picking=false, picked={}, cookDate=null, lastFill=null, bookQ="", bookSort="at", selDate=null;
 
 const $=id=>document.getElementById(id);
@@ -341,38 +343,62 @@ function registerRecipe(k,kk){
 
 /* ---------- 画面切替 ---------- */
 function setTab(t){tab=t;picking=false;picked={};closeSheet();render();window.scrollTo(0,0)}
-function moveMonth(d){const n=new Date(view.y,view.m+d,1);view={y:n.getFullYear(),m:n.getMonth()};render()}
-function titleTap(){ if(tab==="plan") openMonthPicker(); }
+function moveMonth(d){
+  if(tab==="cook"){
+    const n=new Date(cookView.y,cookView.m+d,1);
+    cookView={y:n.getFullYear(),m:n.getMonth()};
+    cookDate=key(clampToMonth(cookView)); render(); return;
+  }
+  const n=new Date(view.y,view.m+d,1); view={y:n.getFullYear(),m:n.getMonth()}; render();
+}
+/* その月のどの日を開くか。今月なら今日、それ以外は1日 */
+function clampToMonth(v){
+  return (v.y===today.getFullYear()&&v.m===today.getMonth())
+    ? today : new Date(v.y,v.m,1);
+}
+function titleTap(){ if(tab==="plan"||tab==="cook") openMonthPicker(); }
 function backToday(){
-  view={y:today.getFullYear(),m:today.getMonth()}; selDate=key(today); closeSheet(); render();
+  if(tab==="cook"){
+    cookView={y:today.getFullYear(),m:today.getMonth()}; cookDate=key(today);
+  }else{
+    view={y:today.getFullYear(),m:today.getMonth()}; selDate=key(today);
+  }
+  closeSheet(); render();
+}
+function pickMonth(y,m){
+  if(tab==="cook"){ cookView={y,m}; cookDate=key(clampToMonth(cookView)); }
+  else view={y,m};
+  closeSheet(); render();
 }
 function openMonthPicker(){
-  const y=view.y;
+  const cv=(tab==="cook")?cookView:view, y=cv.y;
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>いつの月を見る？</h3>
       <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <button class="mini line" onclick="view.y=${y-1};openMonthPicker()">‹ ${y-1}年</button>
+      <button class="mini line" onclick="pickYear(${y-1})">‹ ${y-1}年</button>
       <b style="font-family:var(--mincho);font-size:20px">${y}年</b>
-      <button class="mini line" onclick="view.y=${y+1};openMonthPicker()">${y+1}年 ›</button>
+      <button class="mini line" onclick="pickYear(${y+1})">${y+1}年 ›</button>
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-      ${Array.from({length:12},(_,i)=>`<button class="btn ${(y===view.y&&i===view.m)?"":"quiet"}"
-        style="padding:14px 0" onclick="view={y:${y},m:${i}};closeSheet();render()">${i+1}月</button>`).join("")}
+      ${Array.from({length:12},(_,i)=>`<button class="btn ${(y===cv.y&&i===cv.m)?"":"quiet"}"
+        style="padding:14px 0" onclick="pickMonth(${y},${i})">${i+1}月</button>`).join("")}
     </div>
     <button class="btn wide ghost" style="margin-top:14px" onclick="backToday()">今日にもどる</button>`;
   $("sheet").classList.add("on"); sheetTop();
 }
+function pickYear(y){ if(tab==="cook")cookView.y=y; else view.y=y; openMonthPicker(); }
 function render(){
   document.documentElement.style.setProperty("--hh",$("hd").offsetHeight+"px");
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
-  const mon=tab==="plan";
+  const mon=(tab==="plan"||tab==="cook");
   $("prevBtn").style.visibility=mon?"visible":"hidden";
   $("nextBtn").style.visibility=mon?"visible":"hidden";
   $("pickBar").classList.toggle("hidden",!picking);
   if(tab==="plan"){$("hTitle").textContent=`${view.y}年 ${view.m+1}月 ▾`;
     $("hSub").textContent=picking?"献立をたてる日をえらぶ":`${countMonth()}品ぶん`;renderPlan()}
-  if(tab==="cook"){$("hTitle").textContent="料理をする";$("hSub").textContent=servings();renderCook()}
+  if(tab==="cook"){$("hTitle").textContent=`${cookView.y}年 ${cookView.m+1}月 ▾`;
+    $("hSub").textContent=servings();renderCook()}
   if(tab==="buy"){$("hTitle").textContent="買い物リスト";
     const L=S.shopping&&S.shopping.list;
     $("hSub").textContent=L?`${L.from.slice(5).replace("-","/")}〜${L.to.slice(5).replace("-","/")} のぶん`:"まだリストがありません";
@@ -408,7 +434,8 @@ function renderPlan(){
     ${bar}
     <div class="week">${WD.map((w,i)=>`<div class="${i===0?"sun":i===6?"sat":""}">${w}</div>`).join("")}</div>
     <div class="grid">${cells}</div>
-    ${(!picking&&selDate)?dayPanel(selDate):`<div class="note" style="text-align:center;margin-top:16px">日付をタップすると、その日の献立が下に出ます</div>`}`;
+    ${(!picking&&selDate)?dayPanel(selDate):`<div class="note" style="text-align:center;margin-top:16px">日付をタップすると、その日の献立が下に出ます</div>`}
+    ${picking?"":helpLink()}`;
   if(picking){const n=Object.keys(picked).length;
     $("pickBar").innerHTML=`<button class="btn quiet" onclick="picking=false;picked={};render()">やめる</button>
       <button class="btn" id="genBtn" ${n?"":"disabled"} onclick="generate()">${n}日ぶんの献立をたてる</button>`}
@@ -693,7 +720,11 @@ function dishCard(k,kk,raw){
 function refreshDay(k){render()}
 function saveLabel(k,v){const day=Object.assign({},S.meals[k]||{});if(v.trim())day.label=v.trim();else delete day.label;save(["meals",k],day)}
 function rmDish(k,kk){
-  if(!confirm(`${kindNm(kk)}を献立から外しますか？（レシピ帳は消えません）`))return;
+  const d=dishData((S.meals[k]||{})[kk]);
+  const nm=d&&d.name?`「${d.name}」`:kindNm(kk);
+  const note=(d&&d.recipeId)?"レシピ帳には残るので、あとからまた選べます。"
+    :"この料理のメモ（材料・手順・写真）も一緒に消えます。";
+  if(!confirm(`${nm}を${fromKey(k).getMonth()+1}月${fromKey(k).getDate()}日の献立から外しますか？\n${note}`))return;
   const day=JSON.parse(JSON.stringify(S.meals[k]||{})); delete day[kk];
   save(["meals",k],Object.keys(day).length?day:null); refreshDay(k);
 }
@@ -711,6 +742,10 @@ function addDish(k,kk){
 }
 async function swapDish(k,kk,isNew){
   const day=S.meals[k]||{}, cur=dishData(day[kk]);
+  if(cur&&cur.name&&!isNew){
+    const note=cur.recipeId?"（レシピ帳の内容は残ります）":"（この料理のメモは消えます）";
+    if(!confirm(`「${cur.name}」を別の料理に変えますか？\n${note}`))return;
+  }
   const others=KINDS.filter(x=>x.k!==kk).map(x=>{const o=dishData(day[x.k]);return o&&o.name}).filter(Boolean);
   const recent=seenNames(30);
   toast("考えています…");
@@ -721,7 +756,8 @@ async function swapDish(k,kk,isNew){
 ${servings()}ぶん。${season()}の旬を意識して。${others.length?`同じ日の献立: ${others.join("、")}。重複しない組み合わせに。`:""}
 ${cur&&cur.name?`「${cur.name}」以外で。`:""}${recent.length?`過去に出した「${recent.join("、")}」も避ける。`:""}
 定番すぎないものを。${shuffle(["和食","洋食","中華","韓国風","エスニック"])[0]}寄りでもよい。
-${pool.length?`\n【この候補からえらんでください】料理名はそのまま書き写すこと。合うものが無いときだけ自分で考えてよい。
+${pool.length?`\n【必ずこの候補の中からえらんでください】料理名は一字一句そのまま書き写すこと。
+候補以外の料理を答えてはいけません。
 
 候補:
 ${pool.map(x=>"・"+x.name).join("\n")}`:""}
@@ -730,8 +766,15 @@ ${pool.map(x=>"・"+x.name).join("\n")}`:""}
     const a=adopt(parseJSON(txt));
     if(!a){toast("提案を受け取れませんでした");return}
     putDish(k,kk,a.dish);
-    toast(a.reused?"帳面にあったので、その手順を使います":(isNew?"追加しました":"変更しました"));
+    if(a.reused) toast("帳面にあったので、その手順を使います");
+    else if(a.fromPool) toast(isNew?"追加しました":"変更しました");
+    else toast("楽天にない料理なので写真と材料がありません。もう一度押すと別の候補になります");
   }catch(e){toast(e.message)}
+}
+function chooseFromBook(k,kk,rid){
+  const cur=dishData((S.meals[k]||{})[kk]);
+  if(cur&&cur.name&&!confirm(`「${cur.name}」を「${S.recipes[rid].name}」に差し替えますか？`))return;
+  putDish(k,kk,{recipeId:rid}); closeSheet(); toast("入れました");
 }
 function pickFromBook(k,kk){
   const list=bookList();
@@ -741,7 +784,7 @@ function pickFromBook(k,kk){
     <div class="card">${list.map(r=>`<div class="item">
       <div class="grow"><div class="t">${esc(r.name)}</div>
       <div class="s">${r.cooked?`${r.cooked}回つくった`:"まだ作っていない"}${r.time?`・${r.time}分`:""}</div></div>
-      <button class="mini" onclick="putDish('${k}','${kk}',{recipeId:'${r.id}'});toast('入れました')">えらぶ</button>
+      <button class="mini" onclick="chooseFromBook('${k}','${kk}','${r.id}')">えらぶ</button>
       </div>`).join("")}</div>`;
   $("sheet").classList.add("on"); sheetTop();
 }
@@ -892,10 +935,9 @@ function pickPhoto(ev,k,kk){
 function shiftCook(n){
   if(!cookDate)cookDate=key(today);
   const d=addDays(fromKey(cookDate),n);
-  const min=today, max=addDays(today,COOK_DAYS-1);
-  if(d<new Date(min.getFullYear(),min.getMonth(),min.getDate())) return;
-  if(d>new Date(max.getFullYear(),max.getMonth(),max.getDate())) return;
-  cookDate=key(d); render();
+  cookDate=key(d);
+  cookView={y:d.getFullYear(),m:d.getMonth()};   // 月をまたいだら表示月も動かす
+  render();
 }
 /* 料理タブは左右にフリックして日付を移動できる */
 (function(){
@@ -917,21 +959,104 @@ function shiftCook(n){
 })();
 function renderCook(){
   if(!cookDate)cookDate=key(today);
-  const days=[];for(let i=0;i<COOK_DAYS;i++)days.push(addDays(today,i));
+  // 表示中の日が月とずれていたら、その月に合わせる
+  const cd=fromKey(cookDate);
+  if(cd.getFullYear()!==cookView.y||cd.getMonth()!==cookView.m)
+    cookDate=key(clampToMonth(cookView));
+  const last=new Date(cookView.y,cookView.m+1,0).getDate();
+  const days=[];for(let i=1;i<=last;i++)days.push(new Date(cookView.y,cookView.m,i));
   const day=S.meals[cookDate]||{};
   const kc=KINDS.reduce((a,x)=>{const d=dishData(day[x.k]);return a+((d&&d.kcal)||0)},0);
+  const away=(cookView.y!==today.getFullYear()||cookView.m!==today.getMonth());
   $("app").innerHTML=`
-    <div class="strip">${days.map(d=>{const k=key(d);
+    <div class="strip">${days.map(d=>{const k=key(d), has=S.meals[k];
       return `<button class="${k===cookDate?"on":""}" onclick="cookDate='${k}';render()">
-        <div class="d">${d.getMonth()+1}/${d.getDate()}</div><div class="w">${WD[d.getDay()]}</div></button>`}).join("")}</div>
-    <div class="note" style="text-align:center;margin:-2px 0 8px">← 左右にスワイプで日付を移動 →</div>
+        <div class="d">${d.getDate()}</div><div class="w">${WD[d.getDay()]}</div>
+        ${has?`<div class="pip"></div>`:""}</button>`}).join("")}</div>
+    <div class="note" style="text-align:center;margin:-2px 0 8px">
+      ← 左右にスワイプで日付を移動 →
+      ${away?`　<button class="mini gold" style="min-height:28px;padding:0 10px" onclick="backToday()">今日</button>`:""}
+    </div>
     ${day.label?`<div class="card" style="padding:9px 12px;font-size:14px">${esc(day.label)}</div>`:""}
     ${KINDS.map(x=>dishCard(cookDate,x.k,day[x.k])).join("")}
-    ${kc?`<div class="note" style="text-align:center">1人ぶん 合計 約${kc}kcal</div>`:""}`;
+    ${kc?`<div class="note" style="text-align:center">1人ぶん 合計 約${kc}kcal</div>`:""}
+    ${helpLink()}`;
   const on=$("app").querySelector(".strip button.on");
   if(on) on.scrollIntoView({block:"nearest",inline:"center"});
 }
 
+/* ---------- つかいかた ---------- */
+function helpLink(){
+  return `<div style="text-align:center;margin-top:22px">
+    <button class="mini line" onclick="openHelp()">？ このページのつかいかた</button></div>`;
+}
+const HELP={
+  plan:{t:"献立タブ",b:[
+    ["日にちをえらんで献立をたてる","押すとカレンダーが選択モードになります。必要な日数だけタップして、下のボタンで実行。えらんだ日の空いている枠だけが埋まります。すでに入っている料理は動きません。"],
+    ["日付をタップ","その日の主菜・副菜がカレンダーの下に出ます。料理名を押すと材料とつくり方、「変更」で別の料理に、「外す」で献立から削除。"],
+    ["年月をタップ","上の「2026年9月 ▾」を押すと、年と月を選べます。ずっと前の月にも一度で移動できます。"],
+    ["取り消し","AIがたてた直後なら「取り消す」でまとめて元に戻せます。"]
+  ]},
+  cook:{t:"料理タブ",b:[
+    ["日付の移動","上の帯をタップするか、画面を左右にスワイプ。月をまたぐと表示月も変わります。ヘッダの ‹ › や年月タップでも移動できます。"],
+    ["点の印","日付の下の小さな点は、その日に献立が入っている印です。"],
+    ["材料とつくり方を見る","写真や料理名を押しても開きます。つくり方が空なら、AIに出してもらうボタンが出ます。"],
+    ["作った・写真","料理の写真を撮ると「作った」状態になり、買い物リストの対象から外れます。帳面に入っている料理なら、写真はレシピ帳にも溜まります。"]
+  ]},
+  buy:{t:"買い物タブ",b:[
+    ["リストを作る","買い物に行くときに、何日ぶん買うかを選んでリストを作ります。その時点の献立から材料を写し取るので、あとで献立を変えてもリストは崩れません。"],
+    ["チェック","買ったものにチェック。このリストの中だけの話なので、翌日に持ち越したり他の日に影響したりしません。"],
+    ["共有","LINEなどに送れます。チェック済みのものは除いて送られます。"],
+    ["買い物おわり","リストを閉じます。次に行くときにまた作ります。"]
+  ]},
+  book:{t:"レシピ帳タブ",b:[
+    ["これは何？","気に入った料理を貯めておく場所です。ここに入れた料理は、次に同じ名前が出てきたときに同じ材料・手順が使われます。編集すればその内容が残り続けます。"],
+    ["帳面に入れる","献立の料理カードにある金色のボタンから入れます。入っていない料理を編集すると、自動で入ります。"],
+    ["人気レシピをさがす","楽天レシピから探せます。カテゴリ名で検索でき、「別の候補を見る」で顔ぶれが変わります。"],
+    ["写真","作るたびに溜まります。★を押した写真が一覧の表紙になります。日付は後から直せます。"],
+    ["削除","レシピ帳から消しても、過去の献立には内容がそのまま残ります。"]
+  ]}
+};
+function openHelp(){
+  const h=HELP[tab]||HELP.plan;
+  $("sheetBody").innerHTML=`
+    <div class="sheetHead"><h3>${h.t}のつかいかた</h3>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+    ${h.b.map(([t,d])=>`<div class="card" style="padding:12px 14px">
+      <div style="font-weight:600;color:var(--ink);margin-bottom:4px">${t}</div>
+      <div style="font-size:13.5px;line-height:1.7;color:#4a5058">${d}</div></div>`).join("")}
+    <h2 class="sec">このアプリの流れ</h2>
+    <div class="card" style="font-size:13.5px;line-height:1.9">
+      ① 献立タブで日にちをえらんで献立をたてる<br>
+      ② 買い物タブでリストを作って買い物に行く<br>
+      ③ 料理タブを見ながら作って、写真を撮る<br>
+      ④ 気に入ったらレシピ帳に入れる<br>
+      <span class="note">④をやるほど、次からの提案が自分たち仕様になっていきます。</span>
+    </div>
+    <h2 class="sec">AIはどうやって献立を考えているか</h2>
+    ${AIHELP.map(([t,d])=>`<div class="card" style="padding:12px 14px">
+      <div style="font-weight:600;color:var(--ink);margin-bottom:4px">${t}</div>
+      <div style="font-size:13.5px;line-height:1.7;color:#4a5058">${d}</div></div>`).join("")}`;
+  $("sheet").classList.add("on"); sheetTop();
+}
+const AIHELP=[
+  ["① まず楽天から候補を集める",
+   "楽天レシピには数百のカテゴリがあります。そこから毎回ランダムに十数カテゴリを選び、それぞれの人気ランキングを取ってきて、数十品の候補を作ります。選ぶカテゴリは毎回変わるので、同じ顔ぶれになりません。"],
+  ["② その候補の中から選ばせる",
+   "AIには「必ずこの候補から選べ」と伝えています。候補は実在する人気レシピなので、写真・材料・分量・元レシピのURLがそのまま付いてきます。AIがゼロから考えているわけではありません。"],
+  ["③ 何を避けるかを伝える",
+   "過去に献立へ出した料理とレシピ帳にある料理を最大40品ぶん渡して「これとは違うものを」と指示しています。だんだん被りにくくなります。"],
+  ["④ 偏らないように振る",
+   "毎回ランダムに和食・洋食・中華などの系統と、焼く・煮る・蒸すなどの調理法を指定しています。季節も伝えているので、旬の食材が入りやすくなります。"],
+  ["⑤ レシピ帳にあれば、そちらを使う",
+   "提案された料理名がレシピ帳にあるときは、AIや楽天の内容は捨てて、自分たちが編集した材料と手順を使います。直した内容が毎回よみがえります。"],
+  ["AIが返すのは料理名だけ",
+   "材料や手順まで書かせると時間もお金もかかるので、AIには料理名だけを返させています。中身は楽天かレシピ帳から引いてきます。どちらにも無い料理のときだけ、写真と材料が空になります。"],
+  ["つくり方を出すとき",
+   "レシピ画面のボタンを押したときだけ、その料理の手順をAIが書きます。押さなければ何も起きないので、必要な料理のぶんだけで済みます。"],
+  ["費用のこと",
+   "AIを使うたびにわずかに課金されます（Anthropicの従量課金）。献立を数日ぶん立てて数円程度。使用量は console.anthropic.com で確認できます。"]
+];
 /* ---------- 買い物タブ ---------- */
 function renderBuy(){
   const L=S.shopping&&S.shopping.list;
@@ -971,7 +1096,8 @@ function renderBuy(){
       <input class="field" id="buyIn" placeholder="牛乳" onkeydown="if(event.key==='Enter')addBuy()">
       <button class="btn" onclick="addBuy()">追加</button></div>
     ${total?html:`<div class="empty">このリストは空です。<br>上の欄から手で追加できます。</div>`}
-    <button class="btn wide quiet" style="margin-top:12px" onclick="startList()">リストを作り直す</button>`;
+    <button class="btn wide quiet" style="margin-top:12px" onclick="startList()">リストを作り直す</button>
+    ${helpLink()}`;
 }
 function renderBuyStart(){
   const n=(S.shopping&&S.shopping.days)||7;
@@ -988,7 +1114,8 @@ function renderBuyStart(){
       </div>
       <div class="note" style="margin-top:10px">今日から${n}日ぶんの献立から、まだ作っていない料理の材料を集めます。</div>
       <button class="btn wide" style="margin-top:12px" onclick="startList()">この期間でリストを作る</button>
-    </div>`;
+    </div>
+    ${helpLink()}`;
 }
 function startList(){
   const n=(S.shopping&&S.shopping.days)||7;
@@ -1070,6 +1197,7 @@ function renderBook(){
           `<button class="mini ${bookSort===v?"gold":"line"}" onclick="bookSort='${v}';render()">${n}</button>`).join("")}
       </div>
       <div id="bookGrid"></div>
+      ${helpLink()}
       <div class="note" style="text-align:center;margin-top:16px">
         <a href="https://recipe.rakuten.co.jp/" target="_blank" rel="noopener">Supported by 楽天レシピ</a></div>`
       :`<div class="empty">レシピ帳はまだ空です。<br>献立の料理カードにある「帳面に入れる」を押すと、<br>その料理の材料と手順がここに残ります。<br><br>一度入れておけば、次に同じ料理が出てきたときも<br>編集した内容がそのまま使われます。</div>`}`;
