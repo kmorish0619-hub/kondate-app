@@ -196,31 +196,63 @@ ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-r
   font-size:12px;text-align:center;line-height:22px;color:#5A5C58}
 :focus-visible{outline:2px solid var(--yuzu);outline-offset:2px}
 
+/* 分類を廃止する前のデータに残っている「その他」「調味料」などを取り除く */
+const OLDCATS=["野菜・大豆製品","調味料","その他","魚","肉","卵"];
+function tidyIng(x){
+  let n=String(x.n||"").trim(), amt=String(x.amt||"").trim();
+  for(const c of OLDCATS){
+    if(amt===c){ amt=""; break; }
+    if(amt.endsWith(c)){ amt=amt.slice(0,-c.length).trim(); break; }
+  }
+  // 「パルメザンチーズ 適量 調味料」のように名前へ混ざった場合
+  if(!amt&&/\s/.test(n)){
+    const parts=n.split(/\s+/);
+    if(OLDCATS.includes(parts[parts.length-1])){
+      parts.pop();
+      if(parts.length>1){ amt=parts.pop(); }
+      n=parts.join(" ");
+    }
+  }
+  return {n,amt};
+}
+function tidyAll(){
+  let fixed=0;
+  Object.entries(S.recipes||{}).forEach(([id,r])=>{
+    if(!r.ing||!r.ing.length)return;
+    const before=JSON.stringify(r.ing);
+    const after=r.ing.map(tidyIng);
+    if(JSON.stringify(after)!==before){
+      saveQuiet(["recipes",id],Object.assign({},r,{ing:after})); fixed++;
+    }
+  });
+  return fixed;
+}
 /* ---------- 印刷・PDF ---------- */
 #printArea{display:none}
 @media print{
-  @page{size:A4;margin:16mm 15mm}
-  body{background:#fff;padding:0;font-size:10.5pt}
+  @page{size:A4;margin:11mm 13mm}
+  body{background:#fff;padding:0;font-size:10pt}
   body>*{display:none !important}
   body>#printArea{display:block !important}
-  .pg{page-break-after:always}
+  .pg{page-break-after:always;page-break-inside:avoid}
   .pg:last-child{page-break-after:auto}
-  .pTitle{font-family:var(--mincho);font-size:20pt;font-weight:400;color:#16324F;
-    border-bottom:1.5pt solid #16324F;padding-bottom:3mm;margin-bottom:4mm;line-height:1.4}
-  .pMeta{font-size:9pt;color:#666;margin-bottom:5mm}
-  .pHead{display:flex;gap:6mm;align-items:flex-start;margin-bottom:5mm}
+  .pTitle{font-family:var(--mincho);font-size:17pt;font-weight:400;color:#16324F;
+    border-bottom:1.2pt solid #16324F;padding-bottom:2mm;margin-bottom:3mm;line-height:1.35}
+  .pMeta{font-size:8.5pt;color:#666;margin-bottom:3mm}
+  .pHead{display:flex;gap:5mm;align-items:flex-start;margin-bottom:3mm}
   .pHead .info{flex:1;min-width:0}
-  .pPhoto{width:54mm;height:38mm;object-fit:cover;border-radius:2mm;flex:none}
-  .pSec{font-family:var(--mincho);font-size:13pt;color:#16324F;margin:6mm 0 2.5mm;
-    border-left:2.5mm solid #D8A62E;padding-left:3mm}
-  .pIng{width:100%;border-collapse:collapse;font-size:10.5pt}
-  .pIng td{padding:1.8mm 0;border-bottom:1px dotted #bbb;vertical-align:bottom}
-  .pIng td.a{text-align:right;white-space:nowrap;padding-left:6mm}
-  .pStep{display:flex;gap:3mm;margin-bottom:3mm;font-size:10.5pt;line-height:1.7}
-  .pStep b{flex:none;width:6mm;height:6mm;border-radius:50%;background:#16324F;color:#fff;
-    font-size:8pt;text-align:center;line-height:6mm;font-weight:400}
-  .pTip{background:#F7F3E8;padding:3mm 4mm;font-size:10pt;line-height:1.7;border-radius:2mm}
-  .pFoot{margin-top:8mm;padding-top:2.5mm;border-top:1px solid #ddd;font-size:8pt;color:#888;
+  .pPhoto{width:46mm;height:33mm;object-fit:cover;border-radius:2mm;flex:none}
+  .pSec{font-family:var(--mincho);font-size:12pt;color:#16324F;margin:4mm 0 1.5mm;
+    border-left:2mm solid #D8A62E;padding-left:2.5mm}
+  .pIngWrap.two{column-count:2;column-gap:7mm}
+  .pIng{width:100%;border-collapse:collapse;font-size:10pt}
+  .pIng td{padding:1mm 0;border-bottom:1px dotted #bbb;vertical-align:bottom}
+  .pIng td.a{text-align:right;white-space:nowrap;padding-left:4mm}
+  .pStep{display:flex;gap:2.5mm;margin-bottom:1.8mm;font-size:10pt;line-height:1.6}
+  .pStep b{flex:none;width:5.5mm;height:5.5mm;border-radius:50%;background:#16324F;color:#fff;
+    font-size:7.5pt;text-align:center;line-height:5.5mm;font-weight:400}
+  .pTip{background:#F7F3E8;padding:2.5mm 3.5mm;font-size:9.5pt;line-height:1.6;border-radius:2mm}
+  .pFoot{margin-top:5mm;padding-top:2mm;border-top:1px solid #ddd;font-size:7.5pt;color:#888;
     display:flex;justify-content:space-between}
   .pCover{text-align:center;padding-top:60mm}
   .pCover h1{font-family:var(--mincho);font-size:34pt;font-weight:400;letter-spacing:.3em;color:#16324F}
@@ -317,7 +349,9 @@ function bootStore(){
       DB.ref("/").on("value",s=>{const v=s.val()||{};
         S={meals:v.meals||{}, recipes:v.recipes||{}, shopping:v.shopping||{},
            settings:Object.assign({adults:2,kids:0},v.settings||{})};
-        render();});
+        render();
+        if(!window._tidied){window._tidied=1;setTimeout(()=>{const n=tidyAll();if(n)toast(`${n}件の材料を整えました`)},900)}
+      });
       return;
     }catch(e){console.warn(e)}
   }
@@ -1014,9 +1048,42 @@ function renderCook(){
   if(on) on.scrollIntoView({block:"nearest",inline:"center"});
 }
 
+/* 分類を廃止する前のデータに残っている「その他」「調味料」などを取り除く */
+const OLDCATS=["野菜・大豆製品","調味料","その他","魚","肉","卵"];
+function tidyIng(x){
+  let n=String(x.n||"").trim(), amt=String(x.amt||"").trim();
+  for(const c of OLDCATS){
+    if(amt===c){ amt=""; break; }
+    if(amt.endsWith(c)){ amt=amt.slice(0,-c.length).trim(); break; }
+  }
+  // 「パルメザンチーズ 適量 調味料」のように名前へ混ざった場合
+  if(!amt&&/\s/.test(n)){
+    const parts=n.split(/\s+/);
+    if(OLDCATS.includes(parts[parts.length-1])){
+      parts.pop();
+      if(parts.length>1){ amt=parts.pop(); }
+      n=parts.join(" ");
+    }
+  }
+  return {n,amt};
+}
+function tidyAll(){
+  let fixed=0;
+  Object.entries(S.recipes||{}).forEach(([id,r])=>{
+    if(!r.ing||!r.ing.length)return;
+    const before=JSON.stringify(r.ing);
+    const after=r.ing.map(tidyIng);
+    if(JSON.stringify(after)!==before){
+      saveQuiet(["recipes",id],Object.assign({},r,{ing:after})); fixed++;
+    }
+  });
+  return fixed;
+}
 /* ---------- 印刷・PDF ---------- */
 function pRecipe(r,n,total){
-  const ing=(r.ing||[]).map(x=>`<tr><td>${esc(x.n)}</td><td class="a">${esc(x.amt||"")}</td></tr>`).join("");
+  const list=r.ing||[];
+  const two=list.length>8;   // 材料が多いときは2段に分けて、1ページに収める
+  const ing=list.map(x=>`<tr><td>${esc(x.n)}</td><td class="a">${esc(x.amt||"")}</td></tr>`).join("");
   const steps=(r.steps||[]).map((t,i)=>`<div class="pStep"><b>${i+1}</b><span>${esc(t)}</span></div>`).join("");
   const photo=coverOf(r);
   const meta=[r.time?`調理時間 約${r.time}分`:"",servings(),r.cooked?`${r.cooked}回つくりました`:""].filter(Boolean).join("　／　");
@@ -1025,7 +1092,8 @@ function pRecipe(r,n,total){
     <div class="pHead">
       <div class="info">
         <div class="pMeta">${esc(meta)}</div>
-        ${ing?`<div class="pSec" style="margin-top:0">材料</div><table class="pIng">${ing}</table>`:""}
+        ${ing?`<div class="pSec" style="margin-top:0">材料</div>
+          <div class="pIngWrap ${two?"two":""}"><table class="pIng">${ing}</table></div>`:""}
       </div>
       ${photo?`<img class="pPhoto" src="${photo}" alt="">`:""}
     </div>
