@@ -195,6 +195,39 @@ ol.steps li:last-child{border-bottom:none}
 ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-radius:50%;background:#EFEDE6;
   font-size:12px;text-align:center;line-height:22px;color:#5A5C58}
 :focus-visible{outline:2px solid var(--yuzu);outline-offset:2px}
+
+/* ---------- 印刷・PDF ---------- */
+#printArea{display:none}
+@media print{
+  @page{size:A4;margin:16mm 15mm}
+  body{background:#fff;padding:0;font-size:10.5pt}
+  body>*{display:none !important}
+  body>#printArea{display:block !important}
+  .pg{page-break-after:always}
+  .pg:last-child{page-break-after:auto}
+  .pTitle{font-family:var(--mincho);font-size:20pt;font-weight:400;color:#16324F;
+    border-bottom:1.5pt solid #16324F;padding-bottom:3mm;margin-bottom:4mm;line-height:1.4}
+  .pMeta{font-size:9pt;color:#666;margin-bottom:5mm}
+  .pHead{display:flex;gap:6mm;align-items:flex-start;margin-bottom:5mm}
+  .pHead .info{flex:1;min-width:0}
+  .pPhoto{width:54mm;height:38mm;object-fit:cover;border-radius:2mm;flex:none}
+  .pSec{font-family:var(--mincho);font-size:13pt;color:#16324F;margin:6mm 0 2.5mm;
+    border-left:2.5mm solid #D8A62E;padding-left:3mm}
+  .pIng{width:100%;border-collapse:collapse;font-size:10.5pt}
+  .pIng td{padding:1.8mm 0;border-bottom:1px dotted #bbb;vertical-align:bottom}
+  .pIng td.a{text-align:right;white-space:nowrap;padding-left:6mm}
+  .pStep{display:flex;gap:3mm;margin-bottom:3mm;font-size:10.5pt;line-height:1.7}
+  .pStep b{flex:none;width:6mm;height:6mm;border-radius:50%;background:#16324F;color:#fff;
+    font-size:8pt;text-align:center;line-height:6mm;font-weight:400}
+  .pTip{background:#F7F3E8;padding:3mm 4mm;font-size:10pt;line-height:1.7;border-radius:2mm}
+  .pFoot{margin-top:8mm;padding-top:2.5mm;border-top:1px solid #ddd;font-size:8pt;color:#888;
+    display:flex;justify-content:space-between}
+  .pCover{text-align:center;padding-top:60mm}
+  .pCover h1{font-family:var(--mincho);font-size:34pt;font-weight:400;letter-spacing:.3em;color:#16324F}
+  .pCover .sub{margin-top:8mm;font-size:11pt;color:#666;line-height:2}
+  .pIndex{column-count:2;column-gap:10mm;font-size:10.5pt;line-height:2}
+  .clear{clear:both}
+}
 </style>
 </head>
 <body>
@@ -229,6 +262,7 @@ ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-r
   <button id="sheetClose" onclick="closeSheet()" aria-label="閉じる">×</button>
   <div id="sheetBody"></div></div>
 <div class="toast" id="toast"></div>
+<div id="printArea"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
@@ -814,6 +848,7 @@ function openRecipe(k,kk){
     ${d.tips?`<h2 class="sec">つくり方のコツ</h2><div class="card"><div style="font-size:14px">${esc(d.tips)}</div></div>`:""}
     ${d.url?`<div class="note" style="margin-top:12px"><a href="${esc(d.url)}" target="_blank" rel="noopener">${d.source==="rakuten"?"楽天レシピで元の手順を見る":"参考リンクを開く"}</a></div>`:""}
     <button class="btn wide quiet" style="margin-top:14px" onclick="editDish('${k}','${kk}')">アレンジ・編集する</button>
+    <button class="btn wide quiet" style="margin-top:8px" onclick="printDish('${k}','${kk}')">印刷・PDFにする</button>
     ${d.recipeId?`<div class="note" style="margin-top:8px;text-align:center">編集するとレシピ帳が更新され、次に同じ料理が出たときも反映されます</div>`
       :`<div class="note" style="margin-top:8px;text-align:center">編集すると自動でレシピ帳に登録されます</div>`}`;
   $("sheetBody").dataset.day="";
@@ -979,6 +1014,70 @@ function renderCook(){
   if(on) on.scrollIntoView({block:"nearest",inline:"center"});
 }
 
+/* ---------- 印刷・PDF ---------- */
+function pRecipe(r,n,total){
+  const ing=(r.ing||[]).map(x=>`<tr><td>${esc(x.n)}</td><td class="a">${esc(x.amt||"")}</td></tr>`).join("");
+  const steps=(r.steps||[]).map((t,i)=>`<div class="pStep"><b>${i+1}</b><span>${esc(t)}</span></div>`).join("");
+  const photo=coverOf(r);
+  const meta=[r.time?`調理時間 約${r.time}分`:"",servings(),r.cooked?`${r.cooked}回つくりました`:""].filter(Boolean).join("　／　");
+  return `<div class="pg">
+    <div class="pTitle">${esc(r.name)}</div>
+    <div class="pHead">
+      <div class="info">
+        <div class="pMeta">${esc(meta)}</div>
+        ${ing?`<div class="pSec" style="margin-top:0">材料</div><table class="pIng">${ing}</table>`:""}
+      </div>
+      ${photo?`<img class="pPhoto" src="${photo}" alt="">`:""}
+    </div>
+    ${steps?`<div class="pSec">つくり方</div>${steps}`:""}
+    ${r.tips?`<div class="pSec">コツ</div><div class="pTip">${esc(r.tips)}</div>`:""}
+    ${r.url?`<div class="pMeta" style="margin-top:5mm">参考 ${esc(r.url)}</div>`:""}
+    <div class="pFoot"><span>献立帳</span><span>${total>1?`${n} / ${total}`:esc(printDate())}</span></div>
+  </div>`;
+}
+function printDate(){const d=new Date();return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`}
+function doPrint(html){
+  $("printArea").innerHTML=html;
+  setTimeout(()=>window.print(),80);
+}
+function printOne(id){
+  const r=S.recipes[id]; if(!r)return;
+  doPrint(pRecipe(r,1,1));
+}
+/* 献立に入っているだけで帳面にない料理も印刷できるように */
+function printDish(k,kk){
+  const d=dishData((S.meals[k]||{})[kk]); if(!d)return;
+  doPrint(pRecipe(d,1,1));
+}
+function printBook(){
+  const list=bookList().filter(r=>{const q=norm(bookQ);return !q||norm(r.name).includes(q)});
+  if(!list.length){toast("印刷するレシピがありません");return}
+  const total=list.length;
+  const cover=`<div class="pg"><div class="pCover">
+      <h1>献立帳</h1>
+      <div class="sub">${total}品${bookQ?`（「${esc(bookQ)}」でしぼりこみ）`:""}<br>${printDate()}</div>
+    </div></div>
+    <div class="pg"><div class="pTitle">もくじ</div>
+      <div class="pIndex">${list.map((r,i)=>`<div>${i+1}. ${esc(r.name)}</div>`).join("")}</div>
+      <div class="pFoot"><span>献立帳</span><span>${printDate()}</span></div></div>`;
+  doPrint(cover+list.map((x,i)=>pRecipe(S.recipes[x.id],i+1,total)).join(""));
+}
+function printHelp(){
+  $("sheetBody").innerHTML=`
+    <div class="sheetHead"><h3>PDFにするには</h3>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+    <div class="card" style="font-size:13.5px;line-height:1.9">
+      印刷ボタンを押すとプレビューが出ます。<br><br>
+      <b>iPhone</b><br>
+      プレビュー右上の「共有」から「PDFとして保存」や「ファイルに保存」を選べます。
+      そのままLINEなどにも送れます。<br><br>
+      <b>うまく出ないとき</b><br>
+      ホーム画面のアイコンから開いていると、印刷画面が出ないことがあります。
+      その場合はSafariでこのページを開き直してから試してください。
+    </div>`;
+  $("sheet").classList.add("on"); sheetTop();
+}
+
 /* ---------- つかいかた ---------- */
 function helpLink(){
   return `<div style="text-align:center;margin-top:22px">
@@ -1008,7 +1107,8 @@ const HELP={
     ["帳面に入れる","献立の料理カードにある金色のボタンから入れます。入っていない料理を編集すると、自動で入ります。"],
     ["人気レシピをさがす","楽天レシピから探せます。カテゴリ名で検索でき、「別の候補を見る」で顔ぶれが変わります。"],
     ["写真","作るたびに溜まります。★を押した写真が一覧の表紙になります。日付は後から直せます。"],
-    ["削除","レシピ帳から消しても、過去の献立には内容がそのまま残ります。"]
+    ["削除","レシピ帳から消しても、過去の献立には内容がそのまま残ります。"],
+    ["印刷・PDF","レシピ1品ずつ、またはレシピ帳をまるごとPDFにできます。まるごとの場合は表紙ともくじが付いて、1品1ページの冊子になります。検索でしぼりこんでから押すと、その分だけ出せます。"]
   ]}
 };
 function openHelp(){
@@ -1179,6 +1279,9 @@ function renderBook(){
           `<button class="mini ${bookSort===v?"gold":"line"}" onclick="bookSort='${v}';render()">${n}</button>`).join("")}
       </div>
       <div id="bookGrid"></div>
+      <button class="btn wide ghost" style="margin-top:16px" onclick="printBook()">レシピ帳をまるごとPDFにする</button>
+      <div style="text-align:center;margin-top:6px">
+        <button class="mini line" onclick="printHelp()">？ PDFにするには</button></div>
       ${helpLink()}
       <div class="note" style="text-align:center;margin-top:16px">
         <a href="https://recipe.rakuten.co.jp/" target="_blank" rel="noopener">Supported by 楽天レシピ</a></div>`
@@ -1215,6 +1318,7 @@ function openBook(id){
     ${r.url?`<div class="note" style="margin-top:12px"><a href="${esc(r.url)}" target="_blank" rel="noopener">${r.source==="rakuten"?"楽天レシピで元の手順を見る":"参考リンクを開く"}</a></div>`:""}
     <button class="btn wide" style="margin-top:14px" onclick="bookToMeal('${id}')">この料理を献立に入れる</button>
     <button class="btn wide quiet" style="margin-top:8px" onclick="editBook('${id}')">編集する</button>
+    <button class="btn wide quiet" style="margin-top:8px" onclick="printOne('${id}')">印刷・PDFにする</button>
     <button class="btn wide quiet" style="margin-top:8px;color:var(--danger)" onclick="delBook('${id}')">レシピ帳から削除</button>`;
   $("sheet").classList.add("on"); $("sheetBody").dataset.day="";
 }
