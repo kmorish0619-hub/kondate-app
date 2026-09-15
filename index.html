@@ -116,6 +116,16 @@ h2.sec:first-child{margin-top:2px}
 .photoStrip img{flex:none;width:96px;height:96px;object-fit:cover;border-radius:9px;border:1px solid var(--line)}
 .photoStrip figure{flex:none;margin:0;text-align:center}
 .photoStrip figcaption{font-size:10px;color:var(--grey);margin-top:2px}
+.photoCell{flex:none;width:104px}
+.photoCell .ph{position:relative;width:104px;height:104px}
+.photoCell .ph img{width:104px;height:104px;object-fit:cover;border-radius:9px;border:1px solid var(--line)}
+.photoCell .ph img.cov{outline:3px solid var(--yuzu);outline-offset:-3px}
+.photoCell input{width:104px;margin-top:4px;font-size:11px;padding:4px 2px;text-align:center;
+  border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--sumi)}
+.pbtn{position:absolute;width:26px;height:26px;border-radius:50%;font-size:14px;line-height:26px;text-align:center}
+.pbtn.del{top:4px;right:4px;background:rgba(22,50,79,.85);color:#fff}
+.pbtn.star{top:4px;left:4px;background:rgba(255,255,255,.9);color:#B4B2AA}
+.pbtn.star.on{background:var(--yuzu);color:#fff}
 
 .item{display:flex;gap:10px;align-items:flex-start;padding:10px 2px;border-bottom:1px solid var(--line)}
 .item:last-child{border-bottom:none}
@@ -1114,17 +1124,14 @@ function editBook(id){
     <div class="sheetHead"><h3>レシピを編集</h3>
       <button class="btn quiet" onclick="openBook('${id}')">戻る</button></div>
     <div class="lbl">写真（${ph.length}／${PHOTO_KEEP}枚）　★が一覧に出る代表写真</div>
-    ${ph.length?`<div class="photoStrip">${ph.map(([pid,p])=>`<figure style="position:relative">
-        <img src="${p.img}" alt="" style="${pid===coverId?"outline:3px solid var(--yuzu);outline-offset:-3px":""}">
-        <button onclick="delBookPhoto('${id}','${pid}')" style="position:absolute;top:3px;right:3px;
-          width:26px;height:26px;border-radius:50%;background:rgba(22,50,79,.85);color:#fff;font-size:15px;
-          line-height:26px;text-align:center">×</button>
-        <button onclick="setCover('${id}','${pid}')" style="position:absolute;top:3px;left:3px;
-          width:26px;height:26px;border-radius:50%;font-size:14px;line-height:26px;text-align:center;
-          background:${pid===coverId?"var(--yuzu)":"rgba(255,255,255,.85)"};color:${pid===coverId?"#fff":"#B4B2AA"}">★</button>
-        <input type="date" value="${esc(p.date)}" onchange="setPhotoDate('${id}','${pid}',this.value)"
-          style="width:96px;margin-top:3px;font-size:11px;padding:3px;border:1px solid var(--line);border-radius:6px">
-        </figure>`).join("")}</div>`
+    ${ph.length?`<div class="photoStrip">${ph.map(([pid,p])=>`<div class="photoCell">
+        <div class="ph">
+          <img src="${p.img}" alt="" ${pid===coverId?'class="cov"':""}>
+          <button class="pbtn del" onclick="delBookPhoto('${id}','${pid}')">×</button>
+          <button class="pbtn star ${pid===coverId?"on":""}" onclick="setCover('${id}','${pid}')">★</button>
+        </div>
+        <input type="date" value="${esc(p.date)}" onchange="setPhotoDate('${id}','${pid}',this.value)">
+      </div>`).join("")}</div>`
       :`<div class="note" style="margin-bottom:6px">まだ写真がありません</div>`}
     <label class="btn wide quiet" style="margin-bottom:12px">写真を追加する
       <input type="file" accept="image/*" style="display:none" onchange="addBookPhoto(event,'${id}')"></label>
@@ -1221,8 +1228,27 @@ function saveBook(id){
   openBook(id); toast("保存しました");
 }
 function delBook(id){
-  if(!confirm("このレシピを帳面から削除しますか？\n（過去の献立からも中身が見られなくなります）"))return;
-  save(["recipes",id],null); closeSheet(); toast("削除しました");
+  const r=S.recipes[id]; if(!r)return;
+  // この料理を使っている献立を数える
+  let used=0;
+  Object.keys(S.meals).forEach(k=>KINDS.forEach(x=>{
+    const d=S.meals[k][x.k]; if(d&&d.recipeId===id)used++;}));
+  if(!confirm(`「${r.name}」をレシピ帳から削除しますか？\n${used?`献立に入っている${used}件には、いまの内容がそのまま残ります。`:""}`))return;
+  // 献立側に中身を写してから消す（過去の記録が読めなくならないように）
+  Object.keys(S.meals).forEach(k=>{
+    let changed=false;
+    const day=JSON.parse(JSON.stringify(S.meals[k]));
+    KINDS.forEach(x=>{
+      const d=day[x.k]; if(!d||d.recipeId!==id)return;
+      const copy=recipeFields(r);
+      const ph=(d.photoId&&r.photos&&r.photos[d.photoId])?r.photos[d.photoId].img:coverOf(r);
+      if(ph) copy.photo=ph;
+      copy.done=!!d.done;
+      day[x.k]=copy; changed=true;
+    });
+    if(changed) saveQuiet(["meals",k],day);
+  });
+  save(["recipes",id],null); closeSheet(); toast("レシピ帳から削除しました");
 }
 function bookToMeal(id){
   $("sheetBody").innerHTML=`
