@@ -229,9 +229,12 @@ function makeThumb(dataURI,cb){
   img.src=dataURI;
 }
 /* 旧方式（レシピの中に写真を埋め込む）から新方式へ、一度だけ移す */
+function pendingMigration(){
+  return Object.entries(S.recipes||{}).filter(([id,r])=>r.photos&&Object.keys(r.photos).length);
+}
 function migratePhotos(){
-  const olds=Object.entries(S.recipes||{}).filter(([id,r])=>r.photos&&Object.keys(r.photos).length);
-  if(!olds.length) return;
+  const olds=pendingMigration();
+  if(!olds.length){ if(window._manualMig){toast("切り替えは済んでいます");window._manualMig=0} return; }
   toast(`写真の保存方法を切り替えています（${olds.length}件）`);
   let done=0;
   olds.forEach(([id,r])=>{
@@ -254,6 +257,7 @@ function migratePhotos(){
     if(src) makeThumb(src,finish); else finish(null);
   });
 }
+function runMigration(){ window._manualMig=1; migratePhotos(); }
 
 /* 分類を廃止する前のデータに残っている「その他」「調味料」などを取り除く */
 const OLDCATS=["野菜・大豆製品","調味料","その他","魚","肉","卵"];
@@ -339,6 +343,10 @@ function openBackup(){
     <button class="btn wide quiet" style="margin-top:8px" onclick="exportData(false)">写真なしで書き出す（軽い）</button>
     <div class="note" style="margin-top:8px">写真ごとだと時間がかかり、ファイルも大きくなります。
       月に一度くらい写真ごと、ふだんは写真なしで十分です。</div>
+    ${pendingMigration().length?`<h2 class="sec">写真の保存方法</h2>
+      <div class="note">起動を軽くするため、写真をレシピの外に移す方式に変わりました。
+        まだ切り替わっていないレシピが${pendingMigration().length}件あります。</div>
+      <button class="btn wide" style="margin-top:10px" onclick="runMigration()">いま切り替える</button>`:""}
     <h2 class="sec">読み込む</h2>
     <label class="btn wide ghost">バックアップから戻す
       <input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
@@ -476,9 +484,13 @@ function bootStore(){
           const v=snap.val();
           S[k]=(k==="settings")?Object.assign({adults:2,kids:0},v||{}):(v||{});
           render();
+          // レシピが届いてから一度だけ整える（時間で待つと通信が遅いとき空振りするため）
+          if(k==="recipes"&&!window._migrated&&Object.keys(S.recipes).length){
+            window._migrated=1;
+            setTimeout(()=>{ tidyAll(); migratePhotos(); },400);
+          }
         });
       });
-      setTimeout(()=>{ if(!window._tidied){window._tidied=1; tidyAll(); migratePhotos(); } },1200);
       return;
     }catch(e){console.warn(e)}
   }
@@ -1226,9 +1238,12 @@ function makeThumb(dataURI,cb){
   img.src=dataURI;
 }
 /* 旧方式（レシピの中に写真を埋め込む）から新方式へ、一度だけ移す */
+function pendingMigration(){
+  return Object.entries(S.recipes||{}).filter(([id,r])=>r.photos&&Object.keys(r.photos).length);
+}
 function migratePhotos(){
-  const olds=Object.entries(S.recipes||{}).filter(([id,r])=>r.photos&&Object.keys(r.photos).length);
-  if(!olds.length) return;
+  const olds=pendingMigration();
+  if(!olds.length){ if(window._manualMig){toast("切り替えは済んでいます");window._manualMig=0} return; }
   toast(`写真の保存方法を切り替えています（${olds.length}件）`);
   let done=0;
   olds.forEach(([id,r])=>{
@@ -1251,6 +1266,7 @@ function migratePhotos(){
     if(src) makeThumb(src,finish); else finish(null);
   });
 }
+function runMigration(){ window._manualMig=1; migratePhotos(); }
 
 /* 分類を廃止する前のデータに残っている「その他」「調味料」などを取り除く */
 const OLDCATS=["野菜・大豆製品","調味料","その他","魚","肉","卵"];
@@ -1336,6 +1352,10 @@ function openBackup(){
     <button class="btn wide quiet" style="margin-top:8px" onclick="exportData(false)">写真なしで書き出す（軽い）</button>
     <div class="note" style="margin-top:8px">写真ごとだと時間がかかり、ファイルも大きくなります。
       月に一度くらい写真ごと、ふだんは写真なしで十分です。</div>
+    ${pendingMigration().length?`<h2 class="sec">写真の保存方法</h2>
+      <div class="note">起動を軽くするため、写真をレシピの外に移す方式に変わりました。
+        まだ切り替わっていないレシピが${pendingMigration().length}件あります。</div>
+      <button class="btn wide" style="margin-top:10px" onclick="runMigration()">いま切り替える</button>`:""}
     <h2 class="sec">読み込む</h2>
     <label class="btn wide ghost">バックアップから戻す
       <input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
