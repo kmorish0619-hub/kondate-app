@@ -196,6 +196,65 @@ ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-r
   font-size:12px;text-align:center;line-height:22px;color:#5A5C58}
 :focus-visible{outline:2px solid var(--yuzu);outline-offset:2px}
 
+/* ---------- 写真は必要になったときだけ読む ---------- */
+function photosOf(id){ return PH[id]||{}; }
+function ensurePhotos(id,after){
+  if(PHLOAD[id]){ if(after)after(); return; }
+  if(!DB){ PH[id]=(S.photos&&S.photos[id])||{}; PHLOAD[id]=1; if(after)after(); return; }
+  DB.ref("photos/"+id).once("value").then(sn=>{
+    PH[id]=sn.val()||{}; PHLOAD[id]=1; if(after)after();
+  }).catch(()=>{ PH[id]={}; PHLOAD[id]=1; if(after)after(); });
+}
+function savePhoto(id,pid,obj){
+  PH[id]=PH[id]||{}; PH[id][pid]=obj; PHLOAD[id]=1;
+  if(DB) DB.ref(`photos/${id}/${pid}`).set(obj).catch(()=>toast("写真を保存できませんでした"));
+  else { S.photos=S.photos||{}; S.photos[id]=PH[id]; persist(); }
+}
+function removePhoto(id,pid){
+  if(PH[id]) delete PH[id][pid];
+  if(DB) DB.ref(`photos/${id}/${pid}`).remove().catch(()=>{});
+  else { if(S.photos&&S.photos[id]) delete S.photos[id][pid]; persist(); }
+}
+/* 一覧やカードに出す小さい写真を作る */
+function makeThumb(dataURI,cb){
+  const img=new Image();
+  img.onload=()=>{
+    let w=img.width,h=img.height; const sc=Math.min(1,THUMB_MAX/Math.max(w,h));
+    w=Math.round(w*sc); h=Math.round(h*sc);
+    const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+    cv.getContext("2d").drawImage(img,0,0,w,h);
+    cb(cv.toDataURL("image/jpeg",THUMB_Q));
+  };
+  img.onerror=()=>cb(null);
+  img.src=dataURI;
+}
+/* 旧方式（レシピの中に写真を埋め込む）から新方式へ、一度だけ移す */
+function migratePhotos(){
+  const olds=Object.entries(S.recipes||{}).filter(([id,r])=>r.photos&&Object.keys(r.photos).length);
+  if(!olds.length) return;
+  toast(`写真の保存方法を切り替えています（${olds.length}件）`);
+  let done=0;
+  olds.forEach(([id,r])=>{
+    const entries=Object.entries(r.photos);
+    const meta={};
+    entries.forEach(([pid,pobj])=>{
+      if(pobj&&pobj.img) savePhoto(id,pid,{img:pobj.img,date:pobj.date||key(today)});
+      meta[pid]={date:(pobj&&pobj.date)||key(today)};
+    });
+    const coverId=(r.cover&&r.photos[r.cover])?r.cover
+      :entries.sort((a,b)=>((a[1].date||"")<(b[1].date||"")?1:-1))[0][0];
+    const src=r.photos[coverId]&&r.photos[coverId].img;
+    const finish=thumb=>{
+      const nr=Object.assign({},r,{photoMeta:meta,cover:coverId});
+      if(thumb) nr.thumb=thumb;
+      delete nr.photos;
+      saveQuiet(["recipes",id],nr);
+      if(++done===olds.length){ render(); toast("写真の保存方法を切り替えました"); }
+    };
+    if(src) makeThumb(src,finish); else finish(null);
+  });
+}
+
 /* 分類を廃止する前のデータに残っている「その他」「調味料」などを取り除く */
 const OLDCATS=["野菜・大豆製品","調味料","その他","魚","肉","卵"];
 function tidyIng(x){
@@ -227,6 +286,67 @@ function tidyAll(){
   });
   return fixed;
 }
+/* ---------- バックアップ ---------- */
+async function allPhotos(){
+  if(!DB) return S.photos||{};
+  const sn=await DB.ref("photos").once("value");
+  return sn.val()||{};
+}
+async function exportData(withPhotos){
+  const btn=$("expBtn"); if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> 書き出しています'}
+  try{
+    const data={ version:1, at:new Date().toISOString(),
+      meals:S.meals||{}, recipes:S.recipes||{}, shopping:S.shopping||{}, settings:S.settings||{} };
+    if(withPhotos) data.photos=await allPhotos();
+    const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`kondate-backup-${key(today)}${withPhotos?"":"-写真なし"}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    toast("書き出しました");
+  }catch(e){ toast("書き出せませんでした: "+e.message); }
+  if(btn){btn.disabled=false;btn.textContent="写真ごと書き出す"}
+}
+function importData(ev){
+  const f=ev.target.files&&ev.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    let d=null;
+    try{ d=JSON.parse(rd.result); }catch(e){ toast("読み取れないファイルです"); return; }
+    if(!d||!d.recipes&&!d.meals){ toast("献立帳のバックアップではないようです"); return; }
+    const n=Object.keys(d.recipes||{}).length, m=Object.keys(d.meals||{}).length;
+    if(!confirm(`レシピ${n}品・献立${m}日ぶんを読み込みます。\n\n今のデータはすべて置き換わります。よろしいですか？`))return;
+    if(!confirm("もう一度確認します。\n現在のデータは元に戻せません。本当に置き換えますか？"))return;
+    ["meals","recipes","shopping","settings"].forEach(k=>{ if(d[k]) saveQuiet([k],d[k]); });
+    if(d.photos){
+      PH={}; PHLOAD={};
+      if(DB) DB.ref("photos").set(d.photos).catch(()=>toast("写真を戻せませんでした"));
+      else { S.photos=d.photos; persist(); }
+    }
+    render(); toast("読み込みました");
+  };
+  rd.readAsText(f);
+}
+function openBackup(){
+  $("sheetBody").innerHTML=`
+    <div class="sheetHead"><h3>バックアップ</h3>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+    <div class="note">献立・レシピ帳・写真をファイルに書き出して残せます。
+      iPhoneなら「ファイル」アプリに保存できます。</div>
+    <h2 class="sec">書き出す</h2>
+    <button class="btn wide" id="expBtn" onclick="exportData(true)">写真ごと書き出す</button>
+    <button class="btn wide quiet" style="margin-top:8px" onclick="exportData(false)">写真なしで書き出す（軽い）</button>
+    <div class="note" style="margin-top:8px">写真ごとだと時間がかかり、ファイルも大きくなります。
+      月に一度くらい写真ごと、ふだんは写真なしで十分です。</div>
+    <h2 class="sec">読み込む</h2>
+    <label class="btn wide ghost">バックアップから戻す
+      <input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
+    <div class="warn-note note" style="margin-top:8px;color:var(--danger)">
+      読み込むと今のデータはすべて置き換わります。確認は2回出ます。</div>`;
+  $("sheet").classList.add("on"); sheetTop();
+}
+
 /* ---------- 印刷・PDF ---------- */
 #printArea{display:none}
 @media print{
@@ -314,12 +434,15 @@ const FIREBASE_CONFIG = {
 };
 const PHOTO_MAX = 1200, PHOTO_Q = 0.7;
 const PHOTO_KEEP = 6;   // レシピ1つあたりに残す写真の枚数
+const THUMB_MAX  = 480, THUMB_Q = 0.6;   // 一覧に出す小さい写真
 /* ============================================================ */
 
 const KINDS=[{k:"main",nm:"主菜"},{k:"side",nm:"副菜"}];
 const WD=["日","月","火","水","木","金","土"];
 
 let DB=null, S={meals:{}, recipes:{}, shopping:{}, settings:{adults:2,kids:0}};
+let PH={};          // 開いたレシピの写真だけを入れておく置き場
+let PHLOAD={};      // 読み込み済みかどうか
 const today=new Date();
 let view={y:today.getFullYear(),m:today.getMonth()};
 let cookView={y:today.getFullYear(),m:today.getMonth()};
@@ -347,12 +470,15 @@ function bootStore(){
   if(FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.databaseURL&&window.firebase){
     try{
       firebase.initializeApp(FIREBASE_CONFIG); DB=firebase.database();
-      DB.ref("/").on("value",s=>{const v=s.val()||{};
-        S={meals:v.meals||{}, recipes:v.recipes||{}, shopping:v.shopping||{},
-           settings:Object.assign({adults:2,kids:0},v.settings||{})};
-        render();
-        if(!window._tidied){window._tidied=1;setTimeout(()=>{const n=tidyAll();if(n)toast(`${n}件の材料を整えました`)},900)}
+      // 写真（photos）は重いので、ここでは読み込まない
+      ["meals","recipes","shopping","settings"].forEach(k=>{
+        DB.ref(k).on("value",snap=>{
+          const v=snap.val();
+          S[k]=(k==="settings")?Object.assign({adults:2,kids:0},v||{}):(v||{});
+          render();
+        });
       });
+      setTimeout(()=>{ if(!window._tidied){window._tidied=1; tidyAll(); migratePhotos(); } },1200);
       return;
     }catch(e){console.warn(e)}
   }
@@ -377,7 +503,9 @@ function dishData(d){
     const r=S.recipes[d.recipeId];
     if(!r) return {name:"（削除されたレシピ）",missing:true,recipeId:d.recipeId};
     // その日に撮った写真があればそれを、なければ代表写真を出す
-    const own=(d.photoId&&r.photos&&r.photos[d.photoId])?r.photos[d.photoId].img:null;
+    const loaded=photosOf(d.recipeId);
+    const own=(d.photoId&&loaded[d.photoId])?loaded[d.photoId].img
+      :((d.photoId&&r.photos&&r.photos[d.photoId])?r.photos[d.photoId].img:null);
     return Object.assign({},r,{photo:own||coverOf(r),done:!!d.done,recipeId:d.recipeId,photoId:d.photoId});
   }
   return Object.assign({},d,{photo:d.photo||d.image||null});
@@ -406,7 +534,9 @@ function registerRecipe(k,kk){
   }
   const id=uid(); const rec=recipeFields(d); rec.at=Date.now();
   let photoId=null;
-  if(d.photo){ photoId=uid(); rec.photos={[photoId]:{img:d.photo,date:k}}; }
+  if(d.photo){ photoId=uid(); savePhoto(id,photoId,{img:d.photo,date:k});
+    rec.photoMeta={[photoId]:{date:k}}; rec.cover=photoId;
+    makeThumb(d.photo,t=>{ if(t) saveQuiet(["recipes",id],Object.assign({},S.recipes[id]||rec,{thumb:t})) }); }
   saveQuiet(["recipes",id],rec);
   save(["meals",k,kk], photoId?{recipeId:id,photoId,done:true}:{recipeId:id,done:!!d.done});
   toast("帳面に入れました"); refreshDay(k);
@@ -863,7 +993,8 @@ function openRecipe(k,kk){
   const d=dishData((S.meals[k]||{})[kk]); if(!d)return;
   const meta=d.time?`${d.time}分`:"";
   const r=d.recipeId?S.recipes[d.recipeId]:null;
-  const hist=r&&r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
+  if(r&&!PHLOAD[d.recipeId]) ensurePhotos(d.recipeId,()=>openRecipe(k,kk));
+  const hist=r?photoList(d.recipeId,r).filter(x=>x[1].img):[];
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>${esc(d.name)}</h3>
       <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
@@ -955,7 +1086,9 @@ function saveDish(k,kk){
     }else{
       const id=uid(); const rec=Object.assign({at:Date.now()},f);
       let photoId=null;
-      if(cur.photo){photoId=uid();rec.photos={[photoId]:{img:cur.photo,date:k}}}
+      if(cur.photo){ photoId=uid(); savePhoto(id,photoId,{img:cur.photo,date:k});
+        rec.photoMeta={[photoId]:{date:k}}; rec.cover=photoId;
+        makeThumb(cur.photo,t=>{ if(t) saveQuiet(["recipes",id],Object.assign({},S.recipes[id]||rec,{thumb:t})) }); }
       saveQuiet(["recipes",id],rec);
       save(["meals",k,kk],photoId?{recipeId:id,photoId,done:true}:{recipeId:id,done:!!cur.done});
       toast("レシピ帳に登録しました");
@@ -976,23 +1109,34 @@ function pickPhoto(ev,k,kk){
     cv.getContext("2d").drawImage(img,0,0,w,h);
     const data=cv.toDataURL("image/jpeg",PHOTO_Q);
     const raw=(S.meals[k]||{})[kk]||{};
-    if(raw.recipeId&&S.recipes[raw.recipeId]){
-      const r=JSON.parse(JSON.stringify(S.recipes[raw.recipeId]));
-      r.photos=r.photos||{};
-      const pid=uid(); r.photos[pid]={img:data,date:k};
-      const ids=Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1));
-      if(ids.length>PHOTO_KEEP){
-        const drop=ids.filter(([i])=>i!==r.cover).slice(PHOTO_KEEP-(r.cover?1:0));
-        drop.forEach(([i])=>delete r.photos[i]);
-      }
-      r.cooked=(r.cooked||0)+((raw.done)?0:1);
-      saveQuiet(["recipes",raw.recipeId],r);
-      save(["meals",k,kk],Object.assign({},raw,{photoId:pid,done:true}));
+    const rid=raw.recipeId;
+    if(rid&&S.recipes[rid]){
+      ensurePhotos(rid,()=>{
+        const r=JSON.parse(JSON.stringify(S.recipes[rid]));
+        const pid=uid();
+        savePhoto(rid,pid,{img:data,date:k});
+        const meta=Object.assign({},r.photoMeta||{}); meta[pid]={date:k};
+        // 枚数を超えたら、代表写真を残して古いものから消す
+        const ids=Object.entries(meta).sort((a,b)=>((a[1].date||"")<(b[1].date||"")?1:-1));
+        if(ids.length>PHOTO_KEEP){
+          ids.filter(([i])=>i!==r.cover).slice(PHOTO_KEEP-(r.cover?1:0))
+            .forEach(([i])=>{delete meta[i]; removePhoto(rid,i)});
+        }
+        r.photoMeta=meta; r.cooked=(r.cooked||0)+((raw.done)?0:1);
+        delete r.photos;
+        if(!r.cover) r.cover=pid;
+        const commit=thumb=>{
+          if(thumb&&r.cover===pid) r.thumb=thumb;
+          saveQuiet(["recipes",rid],r);
+          save(["meals",k,kk],Object.assign({},raw,{photoId:pid,done:true}));
+          refreshDay(k); toast(`約${Math.round(data.length/1400)}KBで保存しました`);
+        };
+        if(r.cover===pid) makeThumb(data,commit); else commit(null);
+      });
     }else{
       save(["meals",k,kk],Object.assign({},raw,{photo:data,done:true}));
+      refreshDay(k); toast(`約${Math.round(data.length/1400)}KBで保存しました`);
     }
-    refreshDay(k);
-    toast(`約${Math.round(data.length/1400)}KBで保存しました`);
   };img.src=rd.result};
   rd.readAsDataURL(f);
 }
@@ -1049,6 +1193,65 @@ function renderCook(){
   if(on) on.scrollIntoView({block:"nearest",inline:"center"});
 }
 
+/* ---------- 写真は必要になったときだけ読む ---------- */
+function photosOf(id){ return PH[id]||{}; }
+function ensurePhotos(id,after){
+  if(PHLOAD[id]){ if(after)after(); return; }
+  if(!DB){ PH[id]=(S.photos&&S.photos[id])||{}; PHLOAD[id]=1; if(after)after(); return; }
+  DB.ref("photos/"+id).once("value").then(sn=>{
+    PH[id]=sn.val()||{}; PHLOAD[id]=1; if(after)after();
+  }).catch(()=>{ PH[id]={}; PHLOAD[id]=1; if(after)after(); });
+}
+function savePhoto(id,pid,obj){
+  PH[id]=PH[id]||{}; PH[id][pid]=obj; PHLOAD[id]=1;
+  if(DB) DB.ref(`photos/${id}/${pid}`).set(obj).catch(()=>toast("写真を保存できませんでした"));
+  else { S.photos=S.photos||{}; S.photos[id]=PH[id]; persist(); }
+}
+function removePhoto(id,pid){
+  if(PH[id]) delete PH[id][pid];
+  if(DB) DB.ref(`photos/${id}/${pid}`).remove().catch(()=>{});
+  else { if(S.photos&&S.photos[id]) delete S.photos[id][pid]; persist(); }
+}
+/* 一覧やカードに出す小さい写真を作る */
+function makeThumb(dataURI,cb){
+  const img=new Image();
+  img.onload=()=>{
+    let w=img.width,h=img.height; const sc=Math.min(1,THUMB_MAX/Math.max(w,h));
+    w=Math.round(w*sc); h=Math.round(h*sc);
+    const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+    cv.getContext("2d").drawImage(img,0,0,w,h);
+    cb(cv.toDataURL("image/jpeg",THUMB_Q));
+  };
+  img.onerror=()=>cb(null);
+  img.src=dataURI;
+}
+/* 旧方式（レシピの中に写真を埋め込む）から新方式へ、一度だけ移す */
+function migratePhotos(){
+  const olds=Object.entries(S.recipes||{}).filter(([id,r])=>r.photos&&Object.keys(r.photos).length);
+  if(!olds.length) return;
+  toast(`写真の保存方法を切り替えています（${olds.length}件）`);
+  let done=0;
+  olds.forEach(([id,r])=>{
+    const entries=Object.entries(r.photos);
+    const meta={};
+    entries.forEach(([pid,pobj])=>{
+      if(pobj&&pobj.img) savePhoto(id,pid,{img:pobj.img,date:pobj.date||key(today)});
+      meta[pid]={date:(pobj&&pobj.date)||key(today)};
+    });
+    const coverId=(r.cover&&r.photos[r.cover])?r.cover
+      :entries.sort((a,b)=>((a[1].date||"")<(b[1].date||"")?1:-1))[0][0];
+    const src=r.photos[coverId]&&r.photos[coverId].img;
+    const finish=thumb=>{
+      const nr=Object.assign({},r,{photoMeta:meta,cover:coverId});
+      if(thumb) nr.thumb=thumb;
+      delete nr.photos;
+      saveQuiet(["recipes",id],nr);
+      if(++done===olds.length){ render(); toast("写真の保存方法を切り替えました"); }
+    };
+    if(src) makeThumb(src,finish); else finish(null);
+  });
+}
+
 /* 分類を廃止する前のデータに残っている「その他」「調味料」などを取り除く */
 const OLDCATS=["野菜・大豆製品","調味料","その他","魚","肉","卵"];
 function tidyIng(x){
@@ -1080,6 +1283,67 @@ function tidyAll(){
   });
   return fixed;
 }
+/* ---------- バックアップ ---------- */
+async function allPhotos(){
+  if(!DB) return S.photos||{};
+  const sn=await DB.ref("photos").once("value");
+  return sn.val()||{};
+}
+async function exportData(withPhotos){
+  const btn=$("expBtn"); if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> 書き出しています'}
+  try{
+    const data={ version:1, at:new Date().toISOString(),
+      meals:S.meals||{}, recipes:S.recipes||{}, shopping:S.shopping||{}, settings:S.settings||{} };
+    if(withPhotos) data.photos=await allPhotos();
+    const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`kondate-backup-${key(today)}${withPhotos?"":"-写真なし"}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    toast("書き出しました");
+  }catch(e){ toast("書き出せませんでした: "+e.message); }
+  if(btn){btn.disabled=false;btn.textContent="写真ごと書き出す"}
+}
+function importData(ev){
+  const f=ev.target.files&&ev.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    let d=null;
+    try{ d=JSON.parse(rd.result); }catch(e){ toast("読み取れないファイルです"); return; }
+    if(!d||!d.recipes&&!d.meals){ toast("献立帳のバックアップではないようです"); return; }
+    const n=Object.keys(d.recipes||{}).length, m=Object.keys(d.meals||{}).length;
+    if(!confirm(`レシピ${n}品・献立${m}日ぶんを読み込みます。\n\n今のデータはすべて置き換わります。よろしいですか？`))return;
+    if(!confirm("もう一度確認します。\n現在のデータは元に戻せません。本当に置き換えますか？"))return;
+    ["meals","recipes","shopping","settings"].forEach(k=>{ if(d[k]) saveQuiet([k],d[k]); });
+    if(d.photos){
+      PH={}; PHLOAD={};
+      if(DB) DB.ref("photos").set(d.photos).catch(()=>toast("写真を戻せませんでした"));
+      else { S.photos=d.photos; persist(); }
+    }
+    render(); toast("読み込みました");
+  };
+  rd.readAsText(f);
+}
+function openBackup(){
+  $("sheetBody").innerHTML=`
+    <div class="sheetHead"><h3>バックアップ</h3>
+      <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
+    <div class="note">献立・レシピ帳・写真をファイルに書き出して残せます。
+      iPhoneなら「ファイル」アプリに保存できます。</div>
+    <h2 class="sec">書き出す</h2>
+    <button class="btn wide" id="expBtn" onclick="exportData(true)">写真ごと書き出す</button>
+    <button class="btn wide quiet" style="margin-top:8px" onclick="exportData(false)">写真なしで書き出す（軽い）</button>
+    <div class="note" style="margin-top:8px">写真ごとだと時間がかかり、ファイルも大きくなります。
+      月に一度くらい写真ごと、ふだんは写真なしで十分です。</div>
+    <h2 class="sec">読み込む</h2>
+    <label class="btn wide ghost">バックアップから戻す
+      <input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
+    <div class="warn-note note" style="margin-top:8px;color:var(--danger)">
+      読み込むと今のデータはすべて置き換わります。確認は2回出ます。</div>`;
+  $("sheet").classList.add("on"); sheetTop();
+}
+
 /* ---------- 印刷・PDF ---------- */
 function pRecipe(r,n,total){
   const list=r.ing||[];
@@ -1119,7 +1383,7 @@ function doPrint(html){
 }
 function printOne(id){
   const r=S.recipes[id]; if(!r)return;
-  doPrint(pRecipe(r,1,1));
+  ensurePhotos(id,()=>doPrint(pRecipe(r,1,1)));
 }
 /* 献立に入っているだけで帳面にない料理も印刷できるように */
 function printDish(k,kk){
@@ -1185,6 +1449,7 @@ const HELP={
     ["人気レシピをさがす","楽天レシピから探せます。カテゴリ名で検索でき、「別の候補を見る」で顔ぶれが変わります。"],
     ["写真","作るたびに溜まります。★を押した写真が一覧の表紙になります。日付は後から直せます。"],
     ["削除","レシピ帳から消しても、過去の献立には内容がそのまま残ります。"],
+    ["バックアップ","「バックアップ」から、献立とレシピ帳をファイルに書き出せます。月に一度くらい写真ごと書き出しておくと、万一データが消えても戻せます。"],
     ["印刷・PDF","レシピ1品ずつ、またはレシピ帳をまるごとPDFにできます。まるごとの場合は表紙ともくじが付いて、1品1ページの冊子になります。検索でしぼりこんでから押すと、その分だけ出せます。"]
   ]}
 };
@@ -1329,9 +1594,9 @@ function shareBuy(){
 /* ---------- レシピ帳タブ ---------- */
 function bookList(){
   const arr=Object.entries(S.recipes).map(([id,r])=>{
-    const ph=r.photos?Object.values(r.photos).sort((a,b)=>(a.date<b.date?1:-1)):[];
+    const ph=photoList(id,r);
     return {id,name:r.name,time:r.time,cooked:r.cooked||ph.length,photo:coverOf(r),
-            at:r.at||0, last:ph[0]?ph[0].date:""};
+            at:r.at||0, last:ph[0]?ph[0][1].date:""};
   });
   if(bookSort==="name") arr.sort((a,b)=>a.name.localeCompare(b.name,"ja"));
   else if(bookSort==="last") arr.sort((a,b)=>(b.last||"").localeCompare(a.last||"")||b.at-a.at);
@@ -1357,6 +1622,7 @@ function renderBook(){
       </div>
       <div id="bookGrid"></div>
       <button class="btn wide ghost" style="margin-top:16px" onclick="printBook()">レシピ帳をまるごとPDFにする</button>
+      <button class="btn wide quiet" style="margin-top:8px" onclick="openBackup()">バックアップ</button>
       <div style="text-align:center;margin-top:6px">
         <button class="mini line" onclick="printHelp()">？ PDFにするには</button></div>
       ${helpLink()}
@@ -1378,14 +1644,15 @@ function drawBookGrid(){
 }
 function openBook(id){
   const r=S.recipes[id]; if(!r)return;
-  const ph=r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
+  if(!PHLOAD[id]) ensurePhotos(id,()=>openBook(id));
+  const ph=photoList(id,r).filter(x=>x[1].img);
   const meta=[r.time?`${r.time}分`:"",r.cooked?`${r.cooked}回つくった`:""].filter(Boolean).join("　");
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>${esc(r.name)}</h3>
       <button class="btn quiet" onclick="closeSheet()">閉じる</button></div>
     ${ph.length?`<div class="photoStrip">${ph.map(([i,p])=>`<figure><img src="${p.img}" alt=""
-        style="${i===(r.cover&&r.photos[r.cover]?r.cover:(ph[0]?ph[0][0]:null))?"outline:3px solid var(--yuzu);outline-offset:-3px":""}">
-        <figcaption>${esc(p.date.slice(5).replace("-","/"))}</figcaption></figure>`).join("")}</div>`:""}
+        style="${i===(r.cover||(ph[0]?ph[0][0]:null))?"outline:3px solid var(--yuzu);outline-offset:-3px":""}">
+        <figcaption>${esc((p.date||"").slice(5).replace("-","/"))}</figcaption></figure>`).join("")}</div>`:""}
     <div class="note">${esc(meta||"まだ作っていません")}</div>
     ${(r.ing||[]).length?`<h2 class="sec">材料（${servings()}）</h2><div class="card">${r.ing.map(x=>`<div class="item">
       <div class="grow"><div class="t">${esc(x.n)}</div></div><div class="amt">${esc(x.amt)}</div></div>`).join("")}</div>`:""}
@@ -1400,21 +1667,42 @@ function openBook(id){
   $("sheet").classList.add("on"); $("sheetBody").dataset.day="";
 }
 function coverOf(r){
-  if(r.photos){
+  if(r.thumb) return r.thumb;                 // 一覧用の小さい写真
+  if(r.photos){                                // 切り替え前のデータ
     if(r.cover&&r.photos[r.cover]) return r.photos[r.cover].img;
     const ph=Object.values(r.photos).sort((a,b)=>(a.date<b.date?1:-1));
     if(ph[0]) return ph[0].img;
   }
   return r.image||null;   // 自分の写真がなければ楽天レシピの画像
 }
+/* そのレシピの写真を、新しい順に並べて返す（読み込み済みのものだけ） */
+function photoList(id,r){
+  const loaded=photosOf(id);
+  const meta=(r&&r.photoMeta)||null;
+  if(meta&&Object.keys(meta).length){
+    return Object.entries(meta).map(([pid,m])=>
+      [pid,{date:m.date,img:(loaded[pid]&&loaded[pid].img)||null}])
+      .sort((a,b)=>((a[1].date||"")<(b[1].date||"")?1:-1));
+  }
+  if(r&&r.photos) return Object.entries(r.photos).sort((a,b)=>((a[1].date||"")<(b[1].date||"")?1:-1));
+  return [];
+}
+function photoCount(r){
+  if(r&&r.photoMeta) return Object.keys(r.photoMeta).length;
+  if(r&&r.photos) return Object.keys(r.photos).length;
+  return 0;
+}
 function editBook(id){
   const r=S.recipes[id];
-  const ph=r.photos?Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1)):[];
-  const coverId=(r.cover&&r.photos&&r.photos[r.cover])?r.cover:(ph[0]?ph[0][0]:null);
+  if(!PHLOAD[id]) ensurePhotos(id,()=>editBook(id));
+  const all=photoList(id,r);
+  const ph=all.filter(x=>x[1].img);
+  const coverId=r.cover||(ph[0]?ph[0][0]:null);
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>レシピを編集</h3>
       <button class="btn quiet" onclick="openBook('${id}')">戻る</button></div>
-    <div class="lbl">写真（${ph.length}／${PHOTO_KEEP}枚）　★が一覧に出る代表写真</div>
+    <div class="lbl">写真（${photoCount(r)}／${PHOTO_KEEP}枚）　★が一覧に出る代表写真${
+      (all.length&&!ph.length)?"　読み込み中…":""}</div>
     ${ph.length?`<div class="photoStrip">${ph.map(([pid,p])=>`<div class="photoCell">
         <div class="ph">
           <img src="${p.img}" alt="" ${pid===coverId?'class="cov"':""}>
@@ -1442,12 +1730,17 @@ function editBook(id){
 function setPhotoDate(id,pid,v){
   if(!v)return;
   const r=JSON.parse(JSON.stringify(S.recipes[id]));
+  if(r.photoMeta&&r.photoMeta[pid]) r.photoMeta[pid].date=v;
   if(r.photos&&r.photos[pid]) r.photos[pid].date=v;
+  if(PH[id]&&PH[id][pid]){ PH[id][pid].date=v; savePhoto(id,pid,PH[id][pid]); }
   saveQuiet(["recipes",id],r); render(); editBook(id); toast("日付を変えました");
 }
 function setCover(id,pid){
   const r=JSON.parse(JSON.stringify(S.recipes[id])); r.cover=pid;
-  saveQuiet(["recipes",id],r); render(); editBook(id); toast("代表写真にしました");
+  const src=(photosOf(id)[pid]||{}).img||((r.photos||{})[pid]||{}).img;
+  const done=thumb=>{ if(thumb)r.thumb=thumb; saveQuiet(["recipes",id],r);
+    render(); editBook(id); toast("代表写真にしました"); };
+  if(src) makeThumb(src,done); else done(null);
 }
 /* 写真がいっぱいのときは、どれを消すか選んでもらう */
 let pendingPhoto=null;
@@ -1461,23 +1754,25 @@ function addBookPhoto(ev,id){
     const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
     cv.getContext("2d").drawImage(img,0,0,w,h);
     const data=cv.toDataURL("image/jpeg",PHOTO_Q);
-    const r=S.recipes[id];
-    const n=r.photos?Object.keys(r.photos).length:0;
-    if(n>=PHOTO_KEEP){ pendingPhoto={id,data}; askWhichToDrop(id,data); return; }
-    commitPhoto(id,data,null); editBook(id); toast("写真を追加しました");
+
   };img.src=rd.result};
   rd.readAsDataURL(f);
 }
 function commitPhoto(id,data,dropId){
   const r=JSON.parse(JSON.stringify(S.recipes[id]));
-  r.photos=r.photos||{};
-  if(dropId){ delete r.photos[dropId]; if(r.cover===dropId) delete r.cover; }
-  r.photos[uid()]={img:data,date:key(today)};
-  saveQuiet(["recipes",id],r); render();
+  const meta=Object.assign({},r.photoMeta||{});
+  if(dropId){ delete meta[dropId]; removePhoto(id,dropId); if(r.cover===dropId) delete r.cover; }
+  const pid=uid();
+  savePhoto(id,pid,{img:data,date:key(today)});
+  meta[pid]={date:key(today)};
+  r.photoMeta=meta; delete r.photos;
+  const done=thumb=>{ if(!r.cover){r.cover=pid; if(thumb)r.thumb=thumb;}
+    saveQuiet(["recipes",id],r); render(); };
+  if(!r.cover) makeThumb(data,done); else done(null);
 }
 function askWhichToDrop(id,data){
   const r=S.recipes[id];
-  const ph=Object.entries(r.photos).sort((a,b)=>(a[1].date<b[1].date?1:-1));
+  const ph=photoList(id,r);
   $("sheetBody").innerHTML=`
     <div class="sheetHead"><h3>写真がいっぱいです</h3>
       <button class="btn quiet" onclick="pendingPhoto=null;editBook('${id}')">やめる</button></div>
@@ -1501,9 +1796,11 @@ function dropAndAdd(id,pid){
 function delBookPhoto(id,pid){
   if(!confirm("この写真を削除しますか？"))return;
   const r=JSON.parse(JSON.stringify(S.recipes[id]));
+  const meta=Object.assign({},r.photoMeta||{}); delete meta[pid];
+  removePhoto(id,pid);
   if(r.photos) delete r.photos[pid];
-  if(r.cover===pid) delete r.cover;
-  if(r.photos&&!Object.keys(r.photos).length) delete r.photos;
+  if(r.cover===pid){ delete r.cover; delete r.thumb; }
+  r.photoMeta=meta;
   saveQuiet(["recipes",id],r); render(); editBook(id); toast("削除しました");
 }
 function saveBook(id){
@@ -1531,13 +1828,15 @@ function delBook(id){
     KINDS.forEach(x=>{
       const d=day[x.k]; if(!d||d.recipeId!==id)return;
       const copy=recipeFields(r);
-      const ph=(d.photoId&&r.photos&&r.photos[d.photoId])?r.photos[d.photoId].img:coverOf(r);
+      const ph=(d.photoId&&photosOf(id)[d.photoId])?photosOf(id)[d.photoId].img:coverOf(r);
       if(ph) copy.photo=ph;
       copy.done=!!d.done;
       day[x.k]=copy; changed=true;
     });
     if(changed) saveQuiet(["meals",k],day);
   });
+  if(DB) DB.ref("photos/"+id).remove().catch(()=>{});
+  delete PH[id]; delete PHLOAD[id];
   save(["recipes",id],null); closeSheet(); toast("レシピ帳から削除しました");
 }
 function bookToMeal(id){
