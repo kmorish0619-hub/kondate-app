@@ -27,7 +27,7 @@ button{cursor:pointer;border:none;background:none;padding:0}
   align-items:center;justify-content:center;gap:18px;z-index:100;padding:24px}
 #gate h1{font-family:var(--mincho);font-size:34px;font-weight:400;letter-spacing:.22em;margin:0}
 #gate p{color:#A9BFD4;font-size:13px;margin:0}
-#gate input{width:200px;text-align:center;letter-spacing:.5em;padding:12px;border-radius:10px;
+#gate input{width:220px;text-align:center;letter-spacing:.15em;padding:12px;border-radius:10px;
   border:1px solid #3D5B7C;background:#0F2438;color:#fff}
 #gate button{background:var(--yuzu);color:#16324F;font-weight:700;padding:12px 34px;border-radius:10px}
 #gateErr{color:#F0B4AC;font-size:13px;min-height:20px}
@@ -237,7 +237,7 @@ ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-r
 <div id="gate">
   <h1>献立帳</h1>
   <p>合い言葉を入れてください</p>
-  <input id="gateIn" type="password" inputmode="numeric" autocomplete="off" placeholder="････">
+  <input id="gateIn" type="password" autocomplete="off" placeholder="合い言葉">
   <div id="gateErr"></div>
   <button onclick="tryGate()">開く</button>
 </div>
@@ -272,15 +272,35 @@ ol.steps li::before{content:counter(s);flex:none;width:22px;height:22px;border-r
 /* ============================================================
    設定
    ============================================================ */
-const PASSCODE   = "0619";
 const WORKER_URL = "https://kondateai.kmorish0619.workers.dev";
-const FIREBASE_CONFIG = {
-  apiKey:"AIzaSyD7oztDS4p8jOA7-dkMGlNh5zYkC-O4_v8",
-  authDomain:"kondate-ai-32b02.firebaseapp.com",
-  databaseURL:"https://kondate-ai-32b02-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId:"kondate-ai-32b02",
-  appId:"1:283428202392:web:75f7d8856de76766ccaded"
+/* グループ（家）ごとの合い言葉とFirebase設定。
+   新しい家を増やしたいときは、この{}をまるごとコピーして
+   下に追加し、passcodeとfirebaseの中身を書き換えるだけでよい。 */
+const GROUPS = {
+  koki: {
+    name: "自分用",
+    passcode: "0619",
+    firebase: {
+      apiKey:"AIzaSyD7oztDS4p8jOA7-dkMGlNh5zYkC-O4_v8",
+      authDomain:"kondate-ai-32b02.firebaseapp.com",
+      databaseURL:"https://kondate-ai-32b02-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId:"kondate-ai-32b02",
+      appId:"1:283428202392:web:75f7d8856de76766ccaded"
+    }
+  },
+  morishita: {
+    name: "森下家",
+    passcode: "morishita",
+    firebase: {
+      apiKey:"AIzaSyA4F0Ghm3zHNqbjjTpwPCMI-ISGnHTFtJw",
+      authDomain:"kondate-ai2.firebaseapp.com",
+      databaseURL:"https://kondate-ai2-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId:"kondate-ai2",
+      appId:"1:538385040164:web:43ffa788992ff4f99969b1"
+    }
+  }
 };
+let CUR_GROUP=null, FIREBASE_CONFIG=null;
 const PHOTO_MAX = 1200, PHOTO_Q = 0.7;
 const PHOTO_KEEP = 6;   // レシピ1つあたりに残す写真の枚数
 const THUMB_MAX  = 480, THUMB_Q = 0.6;   // 一覧に出す小さい写真
@@ -316,7 +336,7 @@ function persist(){if(!DB){try{localStorage.setItem("kondate3",JSON.stringify(S)
 function save(p,v){setIn(S,p,v);if(DB)DB.ref(p.join("/")).set(v===undefined?null:v).catch(()=>toast("保存できませんでした"));persist();render()}
 function saveQuiet(p,v){setIn(S,p,v);if(DB)DB.ref(p.join("/")).set(v===undefined?null:v).catch(()=>{});persist()}
 function bootStore(){
-  if(FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.databaseURL&&window.firebase){
+  if(FIREBASE_CONFIG&&FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.databaseURL&&window.firebase){
     try{
       firebase.initializeApp(FIREBASE_CONFIG); DB=firebase.database();
       // 写真（photos）は重いので、ここでは読み込まない
@@ -340,11 +360,36 @@ function bootStore(){
 }
 
 /* ---------- 鍵 ---------- */
-function tryGate(){if($("gateIn").value.trim()===PASSCODE){try{localStorage.setItem("kondate_ok","1")}catch(e){}openApp()}
-  else{$("gateErr").textContent="合い言葉が違います";$("gateIn").value=""}}
+function findGroup(pass){
+  return Object.entries(GROUPS).find(([id,g])=>g.passcode===pass);
+}
+function tryGate(){
+  const hit=findGroup($("gateIn").value.trim());
+  if(hit){
+    const[id,g]=hit; CUR_GROUP=id; FIREBASE_CONFIG=g.firebase;
+    try{localStorage.setItem("kondate_ok","1");localStorage.setItem("kondate_group",id);localStorage.setItem("kondate_pass",g.passcode)}catch(e){}
+    openApp();
+  }else{$("gateErr").textContent="合い言葉が違います";$("gateIn").value=""}
+}
 $("gateIn").addEventListener("keydown",e=>{if(e.key==="Enter")tryGate()});
 function openApp(){$("gate").style.display="none";["hd","app","nav"].forEach(i=>$(i).classList.remove("hidden"));bootStore()}
-(function(){try{if(localStorage.getItem("kondate_ok")==="1"){openApp();return}}catch(e){}$("gateIn").focus()})();
+function logout(){
+  if(!confirm("グループを切り替えますか？\n今の画面を離れて、合い言葉の入力に戻ります。（データは消えません）"))return;
+  try{localStorage.removeItem("kondate_ok");localStorage.removeItem("kondate_group");localStorage.removeItem("kondate_pass")}catch(e){}
+  location.reload();
+}
+(function(){
+  try{
+    const gid=localStorage.getItem("kondate_group");
+    const savedPass=localStorage.getItem("kondate_pass");
+    // 合い言葉があとから変えられていたら、自動ログインさせずもう一度聞き直す
+    if(localStorage.getItem("kondate_ok")==="1"&&gid&&GROUPS[gid]&&GROUPS[gid].passcode===savedPass){
+      CUR_GROUP=gid; FIREBASE_CONFIG=GROUPS[gid].firebase; openApp(); return;
+    }
+  }catch(e){}
+  try{localStorage.removeItem("kondate_ok");localStorage.removeItem("kondate_group");localStorage.removeItem("kondate_pass")}catch(e){}
+  $("gateIn").focus();
+})();
 
 /* ============================================================
    レシピ帳 — ここが知識の本体
@@ -893,6 +938,26 @@ ${hasIng?`材料: ${d.ing.map(x=>`${x.n} ${x.amt}`).join("、")}`:"材料も考�
     openRecipe(k,kk);
   }catch(e){toast(e.message);b.disabled=false;b.textContent="つくり方をAIに出してもらう"}
 }
+/* ---------- 材料の行入力（食材／量を別欄に） ---------- */
+function ingRowHtml(n,amt){
+  return `<div class="ingRow" style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <input class="field ingN" placeholder="食材" value="${esc(n||"")}" style="flex:2">
+    <input class="field ingA" placeholder="量" value="${esc(amt||"")}" style="flex:1">
+    <button type="button" onclick="this.closest('.ingRow').remove()"
+      style="flex:none;width:44px;height:44px;border:none;background:#F4F1E9;color:var(--danger);border-radius:9px;font-size:18px">×</button>
+  </div>`;
+}
+function ingRowsHtml(ing){
+  const list=(ing&&ing.length)?ing:[{n:"",amt:""}];
+  return list.map(x=>ingRowHtml(x.n,x.amt)).join("");
+}
+function addIngRow(){ $("ingRows").insertAdjacentHTML("beforeend",ingRowHtml("","")); }
+function readIngRows(){
+  return Array.from(document.querySelectorAll("#ingRows .ingRow")).map(row=>({
+    n:row.querySelector(".ingN").value.trim(),
+    amt:row.querySelector(".ingA").value.trim()
+  })).filter(x=>x.n);
+}
 function editDish(k,kk,isNew){
   const d=isNew?{name:"",ing:[],steps:[]}:Object.assign({ing:[],steps:[]},dishData((S.meals[k]||{})[kk]));
   $("sheetBody").innerHTML=`
@@ -901,8 +966,9 @@ function editDish(k,kk,isNew){
     <div class="lbl">料理名</div><input class="field" id="eN" value="${esc(d.name)}" placeholder="肉じゃが">
     <div class="lbl" style="margin-top:10px">調理時間（分）</div>
     <input class="field" id="eT" type="number" inputmode="numeric" value="${d.time||""}" style="width:120px">
-    <div class="lbl" style="margin-top:12px">材料（1行に「名前, 分量」）</div>
-    <textarea class="field tall" id="eI" placeholder="玉ねぎ, 中1/2個">${esc((d.ing||[]).map(x=>`${x.n}, ${x.amt}`).join("\n"))}</textarea>
+    <div class="lbl" style="margin-top:12px">材料（食材と量を分けて入力）</div>
+    <div id="ingRows">${ingRowsHtml(d.ing)}</div>
+    <button type="button" class="btn wide quiet" style="margin-bottom:4px" onclick="addIngRow()">＋ 材料を追加</button>
     <div class="lbl" style="margin-top:12px">つくり方（1行に1ステップ）</div>
     <textarea class="field taller" id="eS">${esc((d.steps||[]).join("\n"))}</textarea>
     <div class="lbl" style="margin-top:12px">コツ</div>
@@ -915,10 +981,7 @@ function saveDish(k,kk){
   const name=$("eN").value.trim(); if(!name){toast("料理名を入れてください");return}
   const raw=(S.meals[k]||{})[kk]||{}, cur=dishData(raw)||{};
   const o={ name,
-    ing:$("eI").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
-      const p=l.split(/[,、]/).map(x=>x.trim());
-      return {n:p[0],amt:p[1]||""};
-    }).filter(x=>x.n),
+    ing:readIngRows(),
     steps:$("eS").value.split("\n").map(l=>l.trim()).filter(Boolean),
     tips:$("eP").value.trim(), url:$("eU").value.trim(),
     time:Number($("eT").value)||null };
@@ -1201,7 +1264,10 @@ function openBackup(){
     <label class="btn wide ghost">バックアップから戻す
       <input type="file" accept="application/json,.json" style="display:none" onchange="importData(event)"></label>
     <div class="warn-note note" style="margin-top:8px;color:var(--danger)">
-      読み込むと今のデータはすべて置き換わります。確認は2回出ます。</div>`;
+      読み込むと今のデータはすべて置き換わります。確認は2回出ます。</div>
+    <h2 class="sec">グループ</h2>
+    <div class="note">今は「${(GROUPS[CUR_GROUP]||{}).name||"?"}」のデータを見ています。</div>
+    <button class="btn wide quiet" style="margin-top:8px" onclick="logout()">グループを切り替える</button>`;
   $("sheet").classList.add("on"); sheetTop();
 }
 
@@ -1586,8 +1652,9 @@ function editBook(id){
     <div class="lbl">料理名</div><input class="field" id="eN" value="${esc(r.name)}">
     <div class="lbl" style="margin-top:10px">調理時間（分）</div>
     <input class="field" id="eT" type="number" inputmode="numeric" value="${r.time||""}" style="width:120px">
-    <div class="lbl" style="margin-top:12px">材料（1行に「名前, 分量」）</div>
-    <textarea class="field tall" id="eI" placeholder="玉ねぎ, 中1/2個">${esc((r.ing||[]).map(x=>`${x.n}, ${x.amt}`).join("\n"))}</textarea>
+    <div class="lbl" style="margin-top:12px">材料（食材と量を分けて入力）</div>
+    <div id="ingRows">${ingRowsHtml(r.ing)}</div>
+    <button type="button" class="btn wide quiet" style="margin-bottom:4px" onclick="addIngRow()">＋ 材料を追加</button>
     <div class="lbl" style="margin-top:12px">つくり方（1行に1ステップ）</div>
     <textarea class="field taller" id="eS">${esc((r.steps||[]).join("\n"))}</textarea>
     <div class="lbl" style="margin-top:12px">コツ</div>
@@ -1623,7 +1690,12 @@ function addBookPhoto(ev,id){
     const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
     cv.getContext("2d").drawImage(img,0,0,w,h);
     const data=cv.toDataURL("image/jpeg",PHOTO_Q);
-
+    const r=S.recipes[id];
+    if(photoCount(r)>=PHOTO_KEEP){
+      pendingPhoto={data}; askWhichToDrop(id,data);
+    }else{
+      commitPhoto(id,data,null); editBook(id); toast("写真を追加しました");
+    }
   };img.src=rd.result};
   rd.readAsDataURL(f);
 }
@@ -1675,8 +1747,7 @@ function delBookPhoto(id,pid){
 function saveBook(id){
   const name=$("eN").value.trim(); if(!name){toast("料理名を入れてください");return}
   const f=recipeFields({ name,
-    ing:$("eI").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
-      const p=l.split(/[,、]/).map(x=>x.trim());return {n:p[0],amt:p[1]||""}}).filter(x=>x.n),
+    ing:readIngRows(),
     steps:$("eS").value.split("\n").map(l=>l.trim()).filter(Boolean),
     tips:$("eP").value.trim(), url:$("eU").value.trim(),
     time:$("eT").value });
