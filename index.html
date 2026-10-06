@@ -1065,22 +1065,23 @@ function shiftCook(n){
   cookView={y:d.getFullYear(),m:d.getMonth()};   // 月をまたいだら表示月も動かす
   render();
 }
-/* 料理タブは左右にフリックして日付を移動できる */
+/* 料理タブ・献立タブは左右にフリックして日付／月を移動できる */
 (function(){
-  let x0=null,y0=null;
-  const ok=e=>tab==="cook"&&!$("sheet").classList.contains("on")
+  let x0=null,y0=null,startTab=null;
+  const ok=e=>(tab==="cook"||tab==="plan")&&!$("sheet").classList.contains("on")
     &&!e.target.closest("nav,.strip,input,select,textarea");
   document.addEventListener("touchstart",e=>{
     if(e.touches.length!==1||!ok(e)){x0=null;return}
-    x0=e.touches[0].clientX; y0=e.touches[0].clientY;
+    x0=e.touches[0].clientX; y0=e.touches[0].clientY; startTab=tab;
   },{passive:true});
   document.addEventListener("touchend",e=>{
-    if(x0===null||tab!=="cook")return;
+    if(x0===null||tab!==startTab)return;
     const t=e.changedTouches[0];
     const dx=t.clientX-x0, dy=t.clientY-y0;
     x0=null;
     if(Math.abs(dx)<50||Math.abs(dx)<Math.abs(dy)*1.5)return;  // 縦スクロールと区別する
-    shiftCook(dx<0?1:-1);
+    if(tab==="cook") shiftCook(dx<0?1:-1);
+    else if(tab==="plan") moveMonth(dx<0?1:-1);
   },{passive:true});
 })();
 function renderCook(){
